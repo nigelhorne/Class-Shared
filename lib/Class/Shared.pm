@@ -8,8 +8,9 @@ use File::Spec ();
 
 our $VERSION = '0.01';
 
-# Bumped whenever the wire protocol changes in an incompatible way.
-our $PROTOCOL_VERSION = 1;
+# Bumped whenever the wire protocol changes in an incompatible way.  2 added
+# the HMAC-SHA-256 digest every frame carries when a token is in use.
+our $PROTOCOL_VERSION = 2;
 
 # Longest unix(7) path we are prepared to generate.  The kernel limit is
 # 107 characters plus the terminator; leaving headroom keeps us portable.

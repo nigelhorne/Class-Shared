@@ -422,7 +422,9 @@ sub _request {
 sub _roundtrip {
 	my ($self, $sock, $message) = @_;
 
-	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($message);
+	# With a token every frame is signed, and the backend checks the digest
+	# before it thaws: this is what stops the request bytes from being code.
+	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($message, $self->{token});
 	if (!defined $bytes) {
 		return (undef, $encode_error);
 	}
@@ -430,7 +432,8 @@ sub _roundtrip {
 	my ($ok, $write_error) = Class::Shared::Protocol::write_all($sock, $bytes);
 	return (undef, $write_error) unless $ok;
 
-	my ($response, $read_error) = Class::Shared::Protocol::read_frame($sock);
+	my ($response, $read_error)
+		= Class::Shared::Protocol::read_frame($sock, undef, $self->{token});
 	return (undef, $read_error) unless defined $response;
 
 	if (ref($response) ne 'HASH') {
@@ -633,9 +636,11 @@ neither may be combined with C<socket>.  Autostarting does not apply.
 
 =item token, token_file
 
-A shared secret to present at the handshake, if the backend was started with
-one.  Prefer C<token_file>; a secret passed as C<token> is visible to anything
-that can read this process's memory or command line.
+A shared secret, if the backend was started with one.  Every frame in both
+directions is authenticated with it, and the backend checks the digest before
+it deserialises anything; a frontend whose token is wrong is refused at the
+handshake and gets no object.  Prefer C<token_file>; a secret passed as C<token>
+is visible to anything that can read this process's memory or command line.
 
 =item autostart
 

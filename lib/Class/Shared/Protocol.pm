@@ -245,38 +245,46 @@ L<Class::Shared::Backend>.
 
 =over 4
 
-=item encode_frame($message)
+=item encode_frame($message, $secret)
 
 Returns the framed bytes, or C<(undef, $error)> if the message cannot be
-serialised or is larger than C<$Class::Shared::Protocol::MAX_FRAME>.
+serialised or is larger than C<$Class::Shared::Protocol::MAX_FRAME>.  With a
+C<$secret> the frame carries an HMAC-SHA-256 of its body.
 
 =item write_all($filehandle, $bytes)
 
 Writes every byte.  Returns C<(1)>, or C<(0, $error)>.
 
-=item read_frame($filehandle, $timeout)
+=item read_frame($filehandle, $timeout, $secret)
 
 Reads one frame, waiting forever unless C<$timeout> (seconds) is given.
-Returns C<($message)>, or C<(undef, $error)> on end of file, timeout or
-unusable data.
+Returns C<($message)>, or C<(undef, $error)> on end of file, timeout, a frame
+that fails authentication, or unusable data.
 
-=item take_frame(\$buffer)
+=item take_frame(\$buffer, $secret)
 
 The non-blocking parser for the backend's select loop.  Takes one complete
 frame out of the buffer and returns C<(1, $message, undef)>; returns
 C<(0, undef, undef)> when more bytes are needed; returns C<(-1, undef,
-$error)> if the stream cannot be parsed.
+$error)> if the stream cannot be parsed or a frame does not authenticate.  A
+frame that fails authentication is discarded without being thawed.
 
 =item take_payload($body)
 
-Thaws a frame body.  Returns C<($message, undef)> or C<(undef, $error)>.
+Thaws a frame body, with no authentication.  Returns C<($message, undef)> or
+C<(undef, $error)>.  Use C<take_frame> or C<read_frame> instead when the bytes
+came from a network.
 
 =back
 
 =head1 NOTES
 
-L<Storable::thaw> trusts its input.  Only let this read from sockets that
-belong to the user running the client and the backend.
+L<Storable::thaw> trusts its input: it instantiates classes and runs their
+C<STORABLE_thaw> hooks, which is remote code execution for anyone who can
+write to the socket.  Pass a secret and the digest is checked first.  A backend
+with no secret -- the default for a unix socket, and possible for TCP -- still
+trusts whatever it is sent, which is why the unix socket is mode 0600 in a
+directory only its owner can write to.
 
 =head1 SEE ALSO
 

@@ -232,7 +232,7 @@ sub talk {
 		class => $class,
 		pid   => $$,
 		token => token(),
-	});
+	}, token());
 
 	if (!$hello) {
 		close $sock;
@@ -244,7 +244,7 @@ sub talk {
 		return (undef, $hello->{error} || 'the backend refused the handshake');
 	}
 
-	my ($response, $error) = exchange($sock, $request);
+	my ($response, $error) = exchange($sock, $request, token());
 	close $sock;
 
 	return (undef, $error) unless $response;
@@ -253,15 +253,15 @@ sub talk {
 }
 
 sub exchange {
-	my ($sock, $request) = @_;
+	my ($sock, $request, $secret) = @_;
 
-	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($request);
+	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($request, $secret);
 	return (undef, "cannot encode the request: $encode_error") unless defined $bytes;
 
 	my ($ok, $write_error) = Class::Shared::Protocol::write_all($sock, $bytes);
 	return (undef, "cannot send the request: $write_error") unless $ok;
 
-	my ($response, $read_error) = Class::Shared::Protocol::read_frame($sock);
+	my ($response, $read_error) = Class::Shared::Protocol::read_frame($sock, undef, $secret);
 	return (undef, "cannot read the response: $read_error") unless defined $response;
 
 	return ($response);

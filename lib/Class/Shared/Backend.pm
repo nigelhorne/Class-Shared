@@ -269,11 +269,13 @@ sub _accept {
 	return unless $fh;
 
 	if (keys %{$self->{clients}} >= $self->{max_clients}) {
+		# Signed like every other frame, because the client will check the
+		# digest before it thaws the reply.
 		my ($bytes) = Class::Shared::Protocol::encode_frame({
 			ok    => 0,
 			kind  => 'busy',
 			error => "backend is serving too many clients ($self->{max_clients})",
-		});
+		}, $self->{token});
 		Class::Shared::Protocol::write_all($fh, $bytes) if defined $bytes;
 		close $fh;
 		return;
@@ -310,8 +312,11 @@ sub _serve_client {
 	$client->{buffer} .= $chunk;
 
 	while (1) {
+		# With a token, take_frame checks the frame's digest before it
+		# thaws anything, so an unauthenticated peer never gets as far as
+		# Storable.
 		my ($status, $message, $protocol_error)
-			= Class::Shared::Protocol::take_frame(\$client->{buffer});
+			= Class::Shared::Protocol::take_frame(\$client->{buffer}, $self->{token});
 
 		if ($status == 0) {
 			last;
@@ -368,7 +373,7 @@ sub _drop_client {
 sub _send {
 	my ($self, $client, $message) = @_;
 
-	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($message);
+	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($message, $self->{token});
 
 	if (!defined $bytes) {
 		my $error = $encode_error;
@@ -376,7 +381,7 @@ sub _send {
 			ok    => 0,
 			kind  => 'protocol',
 			error => $error,
-		});
+		}, $self->{token});
 	}
 
 	return unless defined $bytes;
@@ -760,8 +765,10 @@ use or an address of this machine to accept remote clients.
 
 =item token
 
-A shared secret every client must present in its handshake.  Strongly advised
-for a TCP listener; see L</SECURITY>.
+A shared secret.  Every frame in both directions is authenticated with it, and
+a frame is thawed only after its digest has been checked.  Strongly advised for
+a TCP listener, where without it the listener is open to anybody who can reach
+the port; see L</SECURITY>.
 
 =item log
 
@@ -859,8 +866,15 @@ A unix socket is created mode 0600 in a directory only the user can write to.
 
 A TCP listener is plain, unencrypted, and unauthenticated unless C<token> is
 set; even with a token the traffic is readable by anyone who can watch it.  Put
-it on a private network, or a tunnel, if that matters.  The token is compared
-with C<eq>; it is a guard against casual access, not a cryptographic protocol.
+it on a private network, or a tunnel, if that matters.
+
+With a token, every frame carries an HMAC-SHA-256 of its body, keyed with the
+token, and the digest is verified before L<Storable::thaw> is given any of the
+frame.  That order is what makes the token a guard rather than a comment:
+C<thaw> runs code of the sender's choosing, so a peer without the secret is
+stopped before deserialisation, not after it.  A wrong or missing digest ends
+that connection; the peer learns only that the frame failed authentication.  A
+listener started without a token thaws whatever arrives, so do not expose one.
 
 =head1 AUTHOR
 
