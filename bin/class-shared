@@ -1,0 +1,331 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Getopt::Long qw(GetOptions);
+use IO::Socket::INET;
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+
+use Class::Shared ();
+use Class::Shared::Protocol ();
+
+our $VERSION = $Class::Shared::VERSION;
+
+my $program = 'class-shared';
+
+my %opt = (
+	class      => undef,
+	dir        => undef,
+	socket     => undef,
+	listen     => undef,
+	host       => undef,
+	port       => undef,
+	token_file => undef,
+	log        => undef,
+	foreground => 0,
+	help       => 0,
+	version    => 0,
+);
+
+my $options_ok = GetOptions(
+	'class=s'      => \$opt{class},
+	'dir=s'        => \$opt{dir},
+	'socket=s'     => \$opt{socket},
+	'listen=s'     => \$opt{listen},
+	'host=s'       => \$opt{host},
+	'port=i'       => \$opt{port},
+	'token-file=s' => \$opt{token_file},
+	'log=s'        => \$opt{log},
+	'foreground|f' => \$opt{foreground},
+	'help|h'       => \$opt{help},
+	'version|V'    => \$opt{version},
+);
+
+usage(2) unless $options_ok;
+
+if ($opt{version}) {
+	print "$program $VERSION\n";
+	exit 0;
+}
+
+my $command = shift(@ARGV) || 'help';
+
+if ($opt{help} || $command eq 'help') {
+	usage(0);
+}
+
+if ($command eq 'serve') {
+	serve();
+} elsif ($command eq 'status') {
+	status();
+} elsif ($command eq 'stop') {
+	stop();
+} elsif ($command eq 'path') {
+	show_path();
+} else {
+	print STDERR "$program: unknown command '$command'\n";
+	usage(2);
+}
+
+exit 0;
+
+# ---------------------------------------------------------------- commands
+
+sub serve {
+	my $class = require_class();
+	my ($host, $port) = tcp_endpoint();
+
+	eval { require Class::Shared::Backend; 1 }
+		or fatal("cannot load Class::Shared::Backend: $@");
+
+	my $backend = Class::Shared::Backend->new(
+		class     => $class,
+		socket    => defined $host ? undef : socket_path_for($class),
+		host      => $host,
+		port      => $port,
+		token     => token(),
+		dir       => $opt{dir},
+		log       => $opt{log},
+		daemonize => $opt{foreground} ? 0 : 1,
+	);
+
+	my $ok = eval { $backend->run; 1 };
+	if (!$ok) {
+		my $error = $@ || 'unknown error';
+		$error =~ s/\s+\z//;
+		fatal($error);
+	}
+
+	return;
+}
+
+sub status {
+	my $class = require_class();
+
+	my ($response, $error) = talk($class, { op => 'ping' });
+	fatal($error) unless $response;
+	fatal($response->{error} || 'the backend refused the request') unless $response->{ok};
+
+	printf "%s: pid %d, version %s, protocol %d, %d object(s), %d call(s), up %d second(s)\n",
+		$class,
+		$response->{pid},
+		$response->{version},
+		$response->{proto},
+		$response->{objects},
+		$response->{calls},
+		$response->{uptime};
+	printf "address: %s\n", $response->{address};
+	printf "clients: %d\n", $response->{clients};
+	printf "log:     %s\n", log_path_for($class);
+
+	return;
+}
+
+sub stop {
+	my $class = require_class();
+
+	my ($response, $error) = talk($class, { op => 'shutdown' });
+	fatal($error) unless $response;
+	fatal($response->{error} || 'the backend refused to shut down') unless $response->{ok};
+
+	wait_for_exit($class);
+
+	print "stopped $class\n";
+
+	return;
+}
+
+sub show_path {
+	my $class = require_class();
+
+	fatal('path only makes sense for a unix socket; use --host/--port for TCP')
+		if defined $opt{listen} || defined $opt{host} || defined $opt{port};
+
+	print socket_path_for($class), "\n";
+
+	return;
+}
+
+# ---------------------------------------------------------------- plumbing
+
+sub require_class {
+	my $class = $opt{class};
+	fatal("no --class given") unless defined $class && length $class;
+
+	my $valid = eval { Class::Shared::validate_class($class); 1 };
+	fatal($@) unless $valid;
+
+	return $class;
+}
+
+# --listen tcp:HOST:PORT, or --host and --port; otherwise a unix socket.
+sub tcp_endpoint {
+	my ($host, $port) = ($opt{host}, $opt{port});
+
+	if (defined $opt{listen}) {
+		fatal("--listen and --host/--port are alternatives; give one")
+			if defined $host || defined $port;
+
+		if ($opt{listen} =~ /\Atcp:(.+):(\d+)\z/) {
+			($host, $port) = ($1, $2);
+		} elsif ($opt{listen} =~ /\Aunix:(.+)\z/) {
+			$opt{socket} = $1;
+		} else {
+			fatal("--listen wants tcp:HOST:PORT or unix:PATH, not '$opt{listen}'");
+		}
+	}
+
+	fatal('a TCP listener needs both --host and --port')
+		if defined $host xor defined $port;
+
+	return ($host, $port);
+}
+
+sub socket_path_for {
+	my ($class) = @_;
+
+	return $opt{socket} if defined $opt{socket} && length $opt{socket};
+
+	return Class::Shared::socket_path($class, $opt{dir});
+}
+
+sub log_path_for {
+	my ($class) = @_;
+
+	return $opt{log} if defined $opt{log} && length $opt{log};
+
+	return socket_path_for($class) . '.log';
+}
+
+sub token {
+	return undef unless defined $opt{token_file} && length $opt{token_file};
+	return Class::Shared::read_secret($opt{token_file});
+}
+
+sub talk {
+	my ($class, $request) = @_;
+
+	my ($host, $port) = tcp_endpoint();
+
+	my $sock = defined $host
+		? IO::Socket::INET->new(
+			PeerAddr => $host,
+			PeerPort => $port,
+			Proto    => 'tcp',
+			Timeout  => 5,
+		)
+		: do {
+			my $socket = socket_path_for($class);
+			IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $socket);
+		};
+
+	if (!$sock) {
+		my $where = defined $host ? "$host:$port" : socket_path_for($class);
+		return (undef, "no backend for $class at $where: $!");
+	}
+
+	my ($hello, $hello_error) = exchange($sock, {
+		op    => 'hello',
+		proto => $Class::Shared::PROTOCOL_VERSION,
+		class => $class,
+		pid   => $$,
+		token => token(),
+	});
+
+	if (!$hello) {
+		close $sock;
+		return (undef, "handshake failed: $hello_error");
+	}
+
+	if (!$hello->{ok}) {
+		close $sock;
+		return (undef, $hello->{error} || 'the backend refused the handshake');
+	}
+
+	my ($response, $error) = exchange($sock, $request);
+	close $sock;
+
+	return (undef, $error) unless $response;
+
+	return ($response);
+}
+
+sub exchange {
+	my ($sock, $request) = @_;
+
+	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($request);
+	return (undef, "cannot encode the request: $encode_error") unless defined $bytes;
+
+	my ($ok, $write_error) = Class::Shared::Protocol::write_all($sock, $bytes);
+	return (undef, "cannot send the request: $write_error") unless $ok;
+
+	my ($response, $read_error) = Class::Shared::Protocol::read_frame($sock);
+	return (undef, "cannot read the response: $read_error") unless defined $response;
+
+	return ($response);
+}
+
+sub wait_for_exit {
+	my ($class) = @_;
+
+	my ($host) = tcp_endpoint();
+	return if defined $host;
+
+	my $socket = socket_path_for($class);
+	my $deadline = time + 5;
+
+	while (-e $socket && time < $deadline) {
+		select(undef, undef, undef, 0.02);
+	}
+
+	fatal("$class asked to shut down but $socket is still there") if -e $socket;
+
+	return;
+}
+
+sub fatal {
+	my ($message) = @_;
+	$message = '' unless defined $message;
+	$message =~ s/\s+\z//;
+	print STDERR "$program: $message\n";
+	exit 1;
+}
+
+sub usage {
+	my ($status) = @_;
+
+	print STDERR <<"USAGE";
+usage: $program <command> [options]
+
+Commands:
+  serve     run the backend for --class (in the background unless -f)
+  status    ask a running backend what it is doing
+  stop      ask a running backend to shut down, destroying its objects
+  path      print the unix socket path used for --class
+
+Options:
+  --class NAME     the class to serve, e.g. Class::Simple
+  --dir DIR        directory for the socket, lock and log (default:
+                   \$CLASS_SHARED_DIR, then \$XDG_RUNTIME_DIR/class-shared, then
+                   /run/user/\$uid/class-shared, then the system temp directory)
+  --socket PATH    use an explicit unix socket path
+  --listen ADDR    tcp:HOST:PORT to serve remote clients
+  --host HOST      TCP address, with --port
+  --port PORT      TCP port, with --host
+  --token-file F   require clients to present the secret in file F
+  --log PATH       backend log file (default: SOCKET.log)
+  -f, --foreground stay in the foreground (serve)
+  -h, --help       this message
+  -V, --version    print the version
+
+Examples:
+  $program serve  --class Class::Simple -f
+  $program status --class Class::Simple
+  $program serve  --class Class::Simple --listen tcp:0.0.0.0:7000 \\
+                  --token-file /etc/class-shared/token
+USAGE
+
+	exit $status;
+}

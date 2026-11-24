@@ -1,0 +1,13 @@
+Revision history for Class-Shared
+
+0.01    2026-11-24
+        - First release.
+        - Class::Shared::Backend loads the class once and holds many objects,
+          one per client connection, over a unix socket or TCP.
+        - Class::Shared::Frontend stands in for one object, forwarding method
+          calls and preserving calling context, and never loads the class.
+        - Objects belong to the connection that created them, so a client that
+          exits or crashes takes nothing with it and leaks nothing.
+        - Framing and Storable serialisation in Class::Shared::Protocol.
+        - Optional shared-secret handshake for TCP listeners.
+        - bin/class-shared for serve, status, stop and path.
