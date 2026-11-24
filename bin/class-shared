@@ -80,16 +80,25 @@ sub serve {
 	eval { require Class::Shared::Backend; 1 }
 		or fatal("cannot load Class::Shared::Backend: $@");
 
-	my $backend = Class::Shared::Backend->new(
-		class     => $class,
-		socket    => defined $host ? undef : socket_path_for($class),
-		host      => $host,
-		port      => $port,
-		token     => token(),
-		dir       => $opt{dir},
-		log       => $opt{log},
-		daemonize => $opt{foreground} ? 0 : 1,
-	);
+	my $backend = eval {
+		Class::Shared::Backend->new(
+			class     => $class,
+			socket    => defined $host ? undef : socket_path_for($class),
+			host      => $host,
+			port      => $port,
+			token     => token(),
+			dir       => $opt{dir},
+			log       => $opt{log},
+			daemonize => $opt{foreground} ? 0 : 1,
+		);
+	};
+
+	if (!$backend) {
+		my $error = $@ || 'unknown error';
+		$error =~ s/\s+\z//;
+		$error =~ s/\AClass::Shared::Backend->new: //;
+		fatal($error);
+	}
 
 	my $ok = eval { $backend->run; 1 };
 	if (!$ok) {
@@ -208,6 +217,7 @@ sub talk {
 	my ($class, $request) = @_;
 
 	my ($host, $port) = tcp_endpoint();
+	my $secret = token();
 
 	my $sock = defined $host
 		? IO::Socket::INET->new(
@@ -231,11 +241,24 @@ sub talk {
 		proto => $Class::Shared::PROTOCOL_VERSION,
 		class => $class,
 		pid   => $$,
-		token => token(),
-	}, token());
+		token => $secret,
+		}, $secret);
 
 	if (!$hello) {
 		close $sock;
+
+		# A backend with a token will not let a frame it cannot authenticate
+		# through, and it signs its replies too, so a caller with no token
+		# cannot read them: all it sees is a Storable complaint about bytes
+		# that are not an image.  Lead with the likely reason and keep the
+		# complaint underneath, for when the cause was something else.
+		if (!defined $secret) {
+			return (undef,
+				'handshake failed: this backend may require a token; '
+				. "pass --token-file with the secret it uses\n"
+				. "detail: $hello_error");
+		}
+
 		return (undef, "handshake failed: $hello_error");
 	}
 
@@ -244,7 +267,7 @@ sub talk {
 		return (undef, $hello->{error} || 'the backend refused the handshake');
 	}
 
-	my ($response, $error) = exchange($sock, $request, token());
+	my ($response, $error) = exchange($sock, $request, $secret);
 	close $sock;
 
 	return (undef, $error) unless $response;
@@ -314,7 +337,7 @@ Options:
   --listen ADDR    tcp:HOST:PORT to serve remote clients
   --host HOST      TCP address, with --port
   --port PORT      TCP port, with --host
-  --token-file F   require clients to present the secret in file F
+  --token-file F   the shared secret; required for a TCP listener
   --log PATH       backend log file (default: SOCKET.log)
   -f, --foreground stay in the foreground (serve)
   -h, --help       this message
@@ -329,3 +352,185 @@ USAGE
 
 	exit $status;
 }
+
+__END__
+
+=head1 NAME
+
+class-shared - start, inspect and stop a Class::Shared backend
+
+=head1 SYNOPSIS
+
+    class-shared serve  --class Class::Simple [-f] [--dir DIR | --socket PATH]
+    class-shared serve  --class Class::Simple --listen tcp:HOST:PORT \
+                        --token-file FILE
+    class-shared status --class Class::Simple [--dir DIR | --socket PATH]
+    class-shared stop   --class Class::Simple
+    class-shared path   --class Class::Simple [--dir DIR | --socket PATH]
+    class-shared help
+
+=head1 DESCRIPTION
+
+C<class-shared> is the command line face of L<Class::Shared>: it starts the
+singleton L<Class::Shared::Backend> that loads one class and holds an object
+per client, asks a running backend what it is doing, and asks it to stop.
+
+A L<Class::Shared::Frontend> starts a backend of its own over a unix socket and
+never needs this program.  Reach for it when the backend should be started by
+something else, such as an init system, or when it listens on TCP, which no
+frontend will start for you.
+
+=head1 COMMANDS
+
+=over 4
+
+=item serve
+
+Starts the backend for C<--class> and does not return until it stops.  Unless
+C<--foreground> is given it forks into the background first, so the command
+returns once the backend is running.  Whatever the backend has to say goes to
+its log file, C<--log> or the socket path with C<.log> appended, in the
+foreground as well.
+
+The transport is a unix socket unless C<--listen>, C<--host> or C<--port> asks
+for TCP.  A TCP listener needs C<--token-file> and refuses to start without it.
+
+=item status
+
+Pings the backend and prints what it reports: the class, pid, version,
+protocol, number of objects, number of calls, uptime, the address it is
+listening on, the number of clients and the log path.  Prints nothing and exits
+non-zero if no backend answers.
+
+=item stop
+
+Asks the backend to shut down, which destroys its objects and runs their
+C<DESTROY> methods in the backend.  Over a unix socket it waits for the socket
+to disappear afterwards; over TCP there is nothing to wait for.  Prints
+C<stopped CLASS>.
+
+=item path
+
+Prints the unix socket path that C<--class> would use, after C<--dir> and
+C<--socket>.  Refuses the TCP options, which have no socket path.
+
+=item help
+
+Prints a short usage message and exits successfully.  C<--help> does the same.
+
+=back
+
+=head1 OPTIONS
+
+=over 4
+
+=item --class NAME
+
+The class the backend serves, for example C<Class::Simple>.  Required by every
+command; the backend loads it once and will not instantiate anything else.
+
+=item --dir DIR
+
+The directory holding the socket, lock and log.  Defaults to what
+L<Class::Shared/default_dir> picks: C<$CLASS_SHARED_DIR>, then
+C<$XDG_RUNTIME_DIR/class-shared>, then F</run/user/$uid/class-shared>, then a
+per-user directory under the system temporary directory.
+
+=item --socket PATH
+
+An explicit unix socket path, overriding C<--dir>.  Not with the TCP options.
+
+=item --listen ADDR
+
+C<tcp:HOST:PORT> to accept clients over TCP, or C<unix:PATH> to name the unix
+socket.  An alternative to C<--host> and C<--port>, not something to combine
+with them.
+
+=item --host HOST, --port PORT
+
+The TCP address to listen on, or, for C<status> and C<stop>, the address of the
+backend to talk to.  Give both or neither; C<127.0.0.1> keeps it on this
+machine.
+
+=item --token-file FILE
+
+The shared secret, read from C<FILE>.  Every frame in both directions then
+carries the secret's HMAC, and the backend checks that digest before it thaws
+anything, so a peer without the secret cannot have the backend run code of its
+choosing.
+
+A TCP listener requires it.  C<status> and C<stop> must be given the same file,
+or they cannot authenticate to a backend that has one; see L</TOKENS>.
+
+=item --log PATH
+
+Where the backend writes its log.  Defaults to the socket path with C<.log>
+appended.
+
+=item -f, --foreground
+
+Stay in the foreground instead of forking into the background (C<serve> only).
+Useful under a supervisor that does not want a daemon.
+
+=item -h, --help
+
+Print the usage message and exit.
+
+=item -V, --version
+
+Print the version and exit.
+
+=back
+
+=head1 TOKENS
+
+With C<--token-file>, C<status> and C<stop> sign their requests the way a
+frontend does, and a backend with a token refuses any frame it cannot
+authenticate.  Held up against a backend that has a token:
+
+=over 4
+
+=item *
+
+With the right secret the command works as usual.
+
+=item *
+
+With the wrong secret the frame reaches the backend and fails there, which is
+reported as a frame that failed authentication.
+
+=item *
+
+With no C<--token-file> the request goes out unsigned and the backend drops the
+connection.  Its replies are signed too, so this caller cannot read the
+refusal, and all it holds is a L<Storable> complaint about bytes that are not
+an image.  That is no first line for an error, so the message leads with
+
+    handshake failed: this backend may require a token; pass --token-file ...
+
+and the complaint follows on a C<detail:> line, for when the cause was
+something else.  The hint is the one L<Class::Shared::Frontend> gives.
+
+=back
+
+=head1 EXIT STATUS
+
+0 when the command succeeded, 1 when it failed (no backend, a refused request,
+a secret that does not authenticate, a socket that cannot be bound) and 2 for a
+usage error.
+
+=head1 SEE ALSO
+
+L<Class::Shared>, L<Class::Shared::Frontend>, L<Class::Shared::Backend>,
+L<Class::Shared::Protocol>
+
+=head1 AUTHOR
+
+Nigel Horne
+
+=head1 LICENSE
+
+This program is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
+
+=cut

@@ -644,11 +644,12 @@ neither may be combined with C<socket>.  Autostarting does not apply.
 
 =item token, token_file
 
-A shared secret, if the backend was started with one.  Every frame in both
-directions is authenticated with it, and the backend checks the digest before
-it deserialises anything; a frontend whose token is wrong is refused at the
-handshake and gets no object.  Prefer C<token_file>; a secret passed as C<token>
-is visible to anything that can read this process's memory or command line.
+A shared secret.  Every frame in both directions is authenticated with it, and
+the backend checks the digest before it deserialises anything; a frontend whose
+token is wrong is refused at the handshake and gets no object.  A TCP backend
+always has one, since it will not start without a token.  Prefer C<token_file>;
+a secret passed as C<token> is visible to anything that can read this process's
+memory or command line.
 
 =item autostart
 

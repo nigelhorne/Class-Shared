@@ -35,6 +35,14 @@ sub new {
 			unless defined $host && defined $port;
 		die "Class::Shared::Backend->new: use either socket or host/port, not both\n"
 			if defined $socket;
+
+		# A TCP port is reachable by anybody who can route to it, and thawing
+		# is running code, so refuse to be the listener that would deserialise
+		# whatever a stranger sends.
+		my $token = $opt{token};
+		die "Class::Shared::Backend->new: a TCP listener needs a token: "
+			. "without one it would thaw whatever arrives\n"
+			unless defined $token && length $token;
 	} else {
 		$socket = Class::Shared::socket_path($target, $opt{dir})
 			unless defined $socket;
@@ -216,8 +224,9 @@ sub _setup_tcp {
 	$self->{listener} = $listener;
 	$self->{address} = $self->{host} . ':' . $self->{port};
 
-	$self->_log('this listener is not encrypted; keep it on a trusted network or a tunnel')
-		unless $self->{token};
+	# Reachable from off this machine, so say so in the log even though every
+	# frame is authenticated: the bytes themselves are still in the clear.
+	$self->_log('this listener is not encrypted; keep it on a trusted network or a tunnel');
 
 	return 1;
 }
@@ -766,9 +775,8 @@ use or an address of this machine to accept remote clients.
 =item token
 
 A shared secret.  Every frame in both directions is authenticated with it, and
-a frame is thawed only after its digest has been checked.  Strongly advised for
-a TCP listener, where without it the listener is open to anybody who can reach
-the port; see L</SECURITY>.
+a frame is thawed only after its digest has been checked.  Required for a TCP
+listener, which refuses to start without one; see L</SECURITY>.
 
 =item log
 
@@ -864,17 +872,21 @@ exits.
 
 A unix socket is created mode 0600 in a directory only the user can write to.
 
-A TCP listener is plain, unencrypted, and unauthenticated unless C<token> is
-set; even with a token the traffic is readable by anyone who can watch it.  Put
-it on a private network, or a tunnel, if that matters.
+A TCP listener is plain, unencrypted, and always authenticated: it will not
+start without a C<token>, because a port that anybody can route to must not be
+a port where a stranger's bytes reach L<Storable::thaw>.  Even with a token the
+traffic is readable by anyone who can watch it, so put it on a private network,
+or a tunnel, if that matters.
 
 With a token, every frame carries an HMAC-SHA-256 of its body, keyed with the
 token, and the digest is verified before L<Storable::thaw> is given any of the
 frame.  That order is what makes the token a guard rather than a comment:
 C<thaw> runs code of the sender's choosing, so a peer without the secret is
 stopped before deserialisation, not after it.  A wrong or missing digest ends
-that connection; the peer learns only that the frame failed authentication.  A
-listener started without a token thaws whatever arrives, so do not expose one.
+that connection; the peer learns only that the frame failed authentication.
+
+A unix socket needs no token: it is created mode 0600 in a directory only the
+owner can write to.
 
 =head1 AUTHOR
 

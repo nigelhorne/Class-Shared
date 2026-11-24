@@ -14,4 +14,6 @@ t/02-frontend.t
 t/03-cli.t
 t/04-tcp.t
 t/05-cli-tcp.t
+t/06-real-class.t
+t/lib/Shared/Conjunction.pm
 t/lib/Shared/Counter.pm

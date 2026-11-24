@@ -226,6 +226,27 @@ The directory part of C<$path>.
 
 =back
 
+=head1 SHARED SECRET
+
+A backend started with C<token> (C<--token-file> on the command line) only
+talks to clients that know the same secret, and every frame in both directions
+is signed with it.
+
+The signature is an HMAC-SHA-256 of the frame body, keyed with the secret, and
+the backend checks it before L<Storable::thaw> is given the body.  That order
+is the point: C<thaw> will happily run code the sender chose, so a peer without
+the secret has to be stopped before deserialisation, not after it.  A frame
+whose digest does not match ends the connection, and the sender learns only
+that the frame failed authentication.
+
+The secret keeps strangers off the socket; it encrypts nothing.  A TCP
+listener always has one, because the backend refuses to start one without a
+token: a port anybody can route to must not be a port where a stranger's bytes
+reach C<thaw>.  The traffic itself is still readable by anyone who can watch
+it, so keep it on a private network or a tunnel.  See
+L<Class::Shared::Backend/SECURITY> and L<Class::Shared::Protocol> for the
+framing.
+
 =head1 LIMITATIONS
 
 =over 4
@@ -257,6 +278,16 @@ The backend answers one call at a time.  A slow method delays every client.
 
 An object cannot outlive its connection, so it cannot be handed to another
 process; it lives exactly as long as the frontend that made it.
+
+=item *
+
+The backend is a separate process, so nothing about your process reaches it
+unless you send it.  Setting C<$ENV{FOO}> in a frontend does not set it in the
+backend, and a method that reads C<%ENV> (or C<chdir>, or a global, or a file
+handle) sees the backend's environment, not yours: its C<%ENV> is the one the
+backend was started with, and every client shares those values.  Pass such
+state as arguments if it matters, or set the environment when you start the
+backend.
 
 =back
 

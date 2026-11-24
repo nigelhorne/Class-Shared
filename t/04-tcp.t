@@ -31,6 +31,21 @@ open(my $token_fh, '>', $token_file) or plan skip_all => "cannot write $token_fi
 print {$token_fh} "s3cret-token\n";
 close $token_fh;
 
+# A port anybody can route to must not be a port where a stranger's bytes reach
+# Storable::thaw, so a TCP listener without a token refuses to start at all.
+my $tokenless = `$^X -Ilib -It/lib bin/class-shared serve --class Shared::Counter --listen tcp:127.0.0.1:$port -f 2>&1`;
+isnt($?, 0, 'a TCP listener with no token refuses to start');
+like($tokenless, qr/needs a token/, 'and says that a token is required');
+
+my $still_closed = IO::Socket::INET->new(
+	PeerAddr => '127.0.0.1',
+	PeerPort => $port,
+	Proto    => 'tcp',
+	Timeout  => 1,
+);
+ok(!$still_closed, 'and left nothing listening on the port');
+close $still_closed if $still_closed;
+
 my $pid = fork;
 if (!defined $pid) {
 	plan skip_all => "cannot fork: $!";

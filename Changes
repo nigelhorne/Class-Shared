@@ -14,5 +14,7 @@ Revision history for Class-Shared
           is thawed, so a peer without the secret can no longer have the
           backend deserialise -- and so run -- bytes it chose.  Plain frames
           are protocol 1; authenticated ones are protocol 2.
-        - Optional shared-secret handshake for TCP listeners.
+        - Optional shared secret for unix sockets, required for TCP: the
+          backend refuses to start a TCP listener without one, so nothing is
+          ever thawed for a peer that has not authenticated.
         - bin/class-shared for serve, status, stop and path.

@@ -23,8 +23,9 @@ WriteMakefile(
 		'Storable'         => 0,
 	},
 	TEST_REQUIRES    => {
-		'File::Temp' => 0,
-		'Test::More' => '0.98',
+		'File::Temp'          => 0,
+		'Lingua::Conjunction' => 0,
+		'Test::More'          => '0.98',
 	},
 	META_MERGE       => {
 		resources => {

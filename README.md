@@ -81,6 +81,27 @@ useful when writing your own client.
 
     The directory part of `$path`.
 
+## Shared Secret
+
+A backend started with `token` (`--token-file` on the command line) only
+talks to clients that know the same secret, and every frame in both directions
+is signed with it.
+
+The signature is an HMAC-SHA-256 of the frame body, keyed with the secret, and
+the backend checks it before [Storable::thaw](https://metacpan.org/pod/Storable%3A%3Athaw) is given the body.  That order
+is the point: `thaw` will happily run code the sender chose, so a peer without
+the secret has to be stopped before deserialisation, not after it.  A frame
+whose digest does not match ends the connection, and the sender learns only
+that the frame failed authentication.
+
+The secret keeps strangers off the socket; it encrypts nothing.  A TCP
+listener always has one, because the backend refuses to start one without a
+token: a port anybody can route to must not be a port where a stranger's bytes
+reach `thaw`.  The traffic itself is still readable by anyone who can watch
+it, so keep it on a private network or a tunnel.  See
+["SECURITY" in Class::Shared::Backend](https://metacpan.org/pod/Class%3A%3AShared%3A%3ABackend#SECURITY) and [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol) for the
+framing.
+
 ## Limitations
 
 - A unix socket or plain TCP; there is nothing encrypted here.
@@ -93,6 +114,13 @@ references and tied or inside-out objects do not.
 - The backend answers one call at a time.  A slow method delays every client.
 - An object cannot outlive its connection, so it cannot be handed to another
 process; it lives exactly as long as the frontend that made it.
+- The backend is a separate process, so nothing about your process reaches it
+unless you send it.  Setting `$ENV{FOO}` in a frontend does not set it in the
+backend, and a method that reads `%ENV` (or `chdir`, or a global, or a file
+handle) sees the backend's environment, not yours: its `%ENV` is the one the
+backend was started with, and every client shares those values.  Pass such
+state as arguments if it matters, or set the environment when you start the
+backend.
 
 ## See Also
 
