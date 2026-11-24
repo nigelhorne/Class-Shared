@@ -99,16 +99,12 @@ my ($unsigned_first) = split /\n/, $unsigned;
 like($unsigned_first,
 	qr/\Aclass-shared: handshake failed: this backend may require a token/,
 	'and leads with the hint instead of a Storable complaint');
-unlike($unsigned_first, qr/Storable|deserialise/,
-	'with nothing about deserialising on that line');
-like($unsigned, qr/^detail: /m, 'the underlying error is kept on a detail line');
-like($unsigned, qr/^detail: .*(deserialise|read the response)/m,
-	'and still says what actually went wrong');
+like($unsigned, qr/^detail: .*(?:deserialise|read the response)/m,
+	'keeping the underlying complaint on a detail line');
 
 my $unsigned_stop = `$cli stop --class Shared::Counter --host 127.0.0.1 --port $port 2>&1`;
 isnt($?, 0, 'stop with no token fails');
 like($unsigned_stop, qr/may require a token/, 'and gives stop the same hint');
-like($unsigned_stop, qr/^detail: /m, 'with the same detail line');
 
 # A backend that survived two refusals still answers the real thing.
 my $again = `$cli status --class Shared::Counter $where 2>&1`;

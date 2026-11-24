@@ -282,9 +282,9 @@ came from a network.
 L<Storable::thaw> trusts its input: it instantiates classes and runs their
 C<STORABLE_thaw> hooks, which is remote code execution for anyone who can
 write to the socket.  Pass a secret and the digest is checked first.  A backend
-with no secret -- the default for a unix socket, and possible for TCP -- still
-trusts whatever it is sent, which is why the unix socket is mode 0600 in a
-directory only its owner can write to.
+with no secret -- the default for a unix socket -- still trusts whatever it is
+sent, which is why the unix socket is mode 0600 in a directory only its owner
+can write to; a TCP listener always has one.
 
 =head1 SEE ALSO
 

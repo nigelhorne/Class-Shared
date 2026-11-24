@@ -883,7 +883,8 @@ token, and the digest is verified before L<Storable::thaw> is given any of the
 frame.  That order is what makes the token a guard rather than a comment:
 C<thaw> runs code of the sender's choosing, so a peer without the secret is
 stopped before deserialisation, not after it.  A wrong or missing digest ends
-that connection; the peer learns only that the frame failed authentication.
+that connection.  The refusal is signed like any other frame, so a peer that
+does not hold the secret cannot read it either.
 
 A unix socket needs no token: it is created mode 0600 in a directory only the
 owner can write to.

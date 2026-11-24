@@ -255,7 +255,7 @@ sub talk {
 		if (!defined $secret) {
 			return (undef,
 				'handshake failed: this backend may require a token; '
-				. "pass --token-file with the secret it uses\n"
+				. "pass --token-file with its secret\n"
 				. "detail: $hello_error");
 		}
 
@@ -484,34 +484,20 @@ Print the version and exit.
 
 =head1 TOKENS
 
-With C<--token-file>, C<status> and C<stop> sign their requests the way a
-frontend does, and a backend with a token refuses any frame it cannot
-authenticate.  Held up against a backend that has a token:
+C<status> and C<stop> sign their requests when C<--token-file> is given, the
+way a frontend does, and a backend with a token refuses any frame it cannot
+authenticate: the wrong secret is reported as a frame that failed
+authentication, and no C<--token-file> at all leaves the request unsigned, so
+the backend refuses it and drops the connection.
 
-=over 4
-
-=item *
-
-With the right secret the command works as usual.
-
-=item *
-
-With the wrong secret the frame reaches the backend and fails there, which is
-reported as a frame that failed authentication.
-
-=item *
-
-With no C<--token-file> the request goes out unsigned and the backend drops the
-connection.  Its replies are signed too, so this caller cannot read the
-refusal, and all it holds is a L<Storable> complaint about bytes that are not
-an image.  That is no first line for an error, so the message leads with
+That last case leaves nothing readable: the backend signs its refusal too, so
+all the caller holds is a L<Storable> complaint about bytes that are not an
+image.  That makes a poor first line for an error, so the message leads with
 
     handshake failed: this backend may require a token; pass --token-file ...
 
-and the complaint follows on a C<detail:> line, for when the cause was
-something else.  The hint is the one L<Class::Shared::Frontend> gives.
-
-=back
+and keeps the complaint on a C<detail:> line, for when the cause was something
+else.  L<Class::Shared::Frontend> makes the same guess when it has no token.
 
 =head1 EXIT STATUS
 
