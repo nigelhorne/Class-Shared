@@ -13,4 +13,5 @@ t/01-protocol.t
 t/02-frontend.t
 t/03-cli.t
 t/04-tcp.t
+t/05-cli-tcp.t
 t/lib/Shared/Counter.pm
