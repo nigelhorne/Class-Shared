@@ -369,7 +369,15 @@ sub _greet {
 
 	if (!defined $response) {
 		close $sock;
-		$self->{last_error} = "handshake failed: $error";
+
+		# A backend with a token will not let a frame it cannot
+		# authenticate through, and its replies are signed too, so a
+		# client with no token cannot read them.
+		my $why = defined $self->{token}
+			? $error
+			: "$error (this backend may require a token)";
+
+		$self->{last_error} = "handshake failed: $why";
 		return undef;
 	}
 

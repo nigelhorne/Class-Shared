@@ -12,6 +12,7 @@ WriteMakefile(
 	MIN_PERL_VERSION => '5.010',
 	EXE_FILES        => ['bin/class-shared'],
 	PREREQ_PM        => {
+		'Digest::SHA'      => 0,
 		'File::Basename'   => 0,
 		'File::Spec'       => 0,
 		'Fcntl'            => 0,

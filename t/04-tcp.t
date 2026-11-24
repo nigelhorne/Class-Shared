@@ -8,7 +8,9 @@ use IO::Socket::INET;
 use POSIX ();
 use lib 't/lib';
 
+use Class::Shared ();
 use Class::Shared::Frontend;
+use Class::Shared::Protocol;
 
 my $dir = tempdir(CLEANUP => 1);
 
@@ -100,7 +102,7 @@ my $no_token = eval {
 	Class::Shared::Frontend->new('Shared::Counter', host => '127.0.0.1', port => $port);
 };
 ok(!defined $no_token, 'a client without the token gets no object');
-like($@, qr/bad or missing token/, 'and is told why');
+like($@, qr/may require a token|failed authentication/, 'and is told why');
 
 my $wrong_token = eval {
 	Class::Shared::Frontend->new(
@@ -111,7 +113,64 @@ my $wrong_token = eval {
 	);
 };
 ok(!defined $wrong_token, 'a client with the wrong token gets no object');
-like($@, qr/bad or missing token/, 'and is told why');
+like($@, qr/failed authentication/, 'and is told that its frames do not authenticate');
+
+# A frame this backend cannot authenticate must be refused before it is thawed.
+# The bodies below are valid Storable images, so the digest is the only thing
+# between them and the backend's interpreter.
+my @forged = (
+	[
+		'signed with the wrong secret',
+		(Class::Shared::Protocol::encode_frame({
+			op    => 'hello',
+			proto => $Class::Shared::PROTOCOL_VERSION,
+			class => 'Shared::Counter',
+			token => 'not-the-token',
+		}, 'not-the-token'))[0],
+	],
+	[
+		'with no digest at all',
+		(Class::Shared::Protocol::encode_frame({
+			op    => 'hello',
+			proto => $Class::Shared::PROTOCOL_VERSION,
+			class => 'Shared::Counter',
+			token => 's3cret-token',
+		}))[0],
+	],
+);
+
+for my $case (@forged) {
+	my ($label, $frame) = @{$case};
+
+	ok(defined $frame, "a frame $label is built") or next;
+
+	my $raw = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => 5,
+	) or BAIL_OUT("cannot open a raw connection to the backend: $!");
+
+	my ($sent) = Class::Shared::Protocol::write_all($raw, $frame);
+	ok($sent, 'and sent to the backend');
+
+	my ($reply, $read_error) = Class::Shared::Protocol::read_frame($raw, 5, 's3cret-token');
+	ok(defined $reply, 'the backend answers') or diag $read_error;
+	next unless $reply;
+
+	ok(!$reply->{ok}, "the frame $label is refused");
+	like($reply->{error}, qr/failed authentication|too short/,
+		'because it could not be authenticated');
+
+	# The connection is dropped rather than kept for another guess.
+	my ($after, $after_error) = Class::Shared::Protocol::read_frame($raw, 5, 's3cret-token');
+	is($after, undef, 'and the connection is closed');
+	like($after_error, qr/closed/, 'as a closed stream');
+
+	close $raw;
+}
+
+is($frontend->value, 6, 'the real client still works after the forgeries');
 
 # Nothing can be autostarted over TCP: a closed port is an error.
 my $closed = IO::Socket::INET->new(

@@ -9,5 +9,10 @@ Revision history for Class-Shared
         - Objects belong to the connection that created them, so a client that
           exits or crashes takes nothing with it and leaks nothing.
         - Framing and Storable serialisation in Class::Shared::Protocol.
+        - Optional shared secret: when a token is set, every frame carries an
+          HMAC-SHA-256 of its body and the digest is verified before the frame
+          is thawed, so a peer without the secret can no longer have the
+          backend deserialise -- and so run -- bytes it chose.  Plain frames
+          are protocol 1; authenticated ones are protocol 2.
         - Optional shared-secret handshake for TCP listeners.
         - bin/class-shared for serve, status, stop and path.

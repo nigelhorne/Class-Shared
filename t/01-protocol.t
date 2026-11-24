@@ -76,4 +76,99 @@ is_deeply($decoded, $message, 'the message survives a round trip');
 	like($error, qr/cannot serialise/, 'and the caller is told why');
 }
 
+# Authenticated frames: an HMAC goes over the raw body and is checked before
+# Storable is allowed to look at that body.
+{
+	package Shared::Trap;
+
+	our $THAWED = 0;
+
+	# A body that does something when it is thawed.  Nothing here is an
+	# exploit by itself; it is the hook that a crafted Storable image would
+	# use, and it stands in for arbitrary code chosen by a remote peer.
+	sub STORABLE_freeze { return '' }
+	sub STORABLE_thaw   { $THAWED++; return bless {}, 'Shared::Trap' }
+
+	package main;
+
+	my $secret = 'a-shared-secret';
+
+	my ($signed, $sign_error) = Class::Shared::Protocol::encode_frame($message, $secret);
+	ok(defined $signed, 'a message signs') or diag $sign_error;
+	is(unpack('N', substr($signed, 0, 4)), length($signed) - 4,
+		'the header counts the digest and the body');
+
+	my $buffer = $signed;
+	my @taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], 1, 'a signed frame is taken');
+	is_deeply($taken[1], $message, 'and decodes to the message that was signed');
+	is($buffer, '', 'leaving nothing in the buffer');
+
+	my ($trap_frame) = Class::Shared::Protocol::encode_frame(
+		{ op => 'call', object => bless({}, 'Shared::Trap') },
+		$secret,
+	);
+	ok(defined $trap_frame, 'a body with a thaw hook can be framed');
+
+	$buffer = $trap_frame;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], 1, 'a correctly signed frame is taken');
+	is($Shared::Trap::THAWED, 1, 'and only then is its thaw hook run');
+
+	my $thawed = $Shared::Trap::THAWED;
+
+	# One bit of the digest, body untouched: only the digest can reject this.
+	my $broken_digest = $trap_frame;
+	substr($broken_digest, 4, 1) = chr(ord(substr($broken_digest, 4, 1)) ^ 0x80);
+	$buffer = $broken_digest;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], -1, 'a frame with a bad digest is refused');
+	like($taken[2], qr/failed authentication/, 'as an authentication failure');
+	is($Shared::Trap::THAWED, $thawed, 'and its body was never deserialised');
+
+	# One bit of the body, digest untouched.
+	my $broken_body = $trap_frame;
+	my $last = length($broken_body) - 1;
+	substr($broken_body, $last, 1) = chr(ord(substr($broken_body, $last, 1)) ^ 0x01);
+	$buffer = $broken_body;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], -1, 'a frame whose body was altered is refused');
+	is($Shared::Trap::THAWED, $thawed, 'and that body was not deserialised either');
+
+	$buffer = $trap_frame;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, 'not-the-secret');
+	is($taken[0], -1, 'a frame signed with another secret is refused');
+	is($Shared::Trap::THAWED, $thawed, 'and not deserialised');
+
+	$buffer = $bytes;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], -1, 'an unsigned frame is refused where one is expected');
+	is($Shared::Trap::THAWED, $thawed, 'and not deserialised');
+
+	$buffer = pack('N', 8) . 'xxxxxxxx';
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], -1, 'a frame with no room for a digest is refused');
+	like($taken[2], qr/too short/, 'and named as too short');
+
+	$buffer = pack('N', $Class::Shared::Protocol::MAX_FRAME + 100) . 'x' x 8;
+	@taken = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+	is($taken[0], -1, 'a frame larger than a digest plus the limit is refused');
+
+	# read_frame authenticates the same way, before it thaws.
+	my ($writer, $reader);
+	my $paired = socketpair($writer, $reader, AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+	ok($paired, 'have a socket pair to read from') or diag "socketpair: $!";
+
+	if ($paired) {
+		my ($sent) = Class::Shared::Protocol::write_all($writer, $broken_body);
+		ok($sent, 'a tampered frame is written to it');
+
+		my ($got, $read_error)
+			= Class::Shared::Protocol::read_frame($reader, undef, $secret);
+		is($got, undef, 'read_frame refuses a tampered frame');
+		like($read_error, qr/failed authentication/, 'for the same reason');
+		is($Shared::Trap::THAWED, $thawed, 'without deserialising it');
+	}
+}
+
 done_testing();
