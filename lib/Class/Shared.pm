@@ -34,18 +34,16 @@ our $TLS_VERSIONS = 'SSLv23:!SSLv3:!SSLv2:!TLSv1:!TLSv1_1';
 
 # Parts of a class name are joined by "::".  The characters of a part never
 # include ":", so a part can only end where "::" or the end begins, and there
-# is only one way to match any name.  That makes the possessive quantifiers
-# safe: they stop the engine from trying shorter parts after a failure, which
-# made a long bad name cost ten times as much to refuse as it did to read.
+# is only one way to match any name.
+#
+# The name is checked in two flat steps, not by one pattern that repeats a
+# group once per part: perl 5.26 stops a repeated group at 32766 repeats
+# ("Complex regular subexpression recursion limit"), so a long but valid
+# name would die there.  Step one matches only the allowed characters, and its
+# capture is what is returned, so it is untainted.  Step two checks each part.
 # The classes are written out, not \w, so that no non-ASCII letter is accepted.
-my $CLASS_RE = qr/
-	\A
-	(                                       # captured, so the result is untainted
-		[A-Za-z_] [A-Za-z0-9_]*+              # the first part
-		(?: :: [A-Za-z_] [A-Za-z0-9_]*+ )*+   # each part after a "::"
-	)
-	\z
-/x;
+my $CLASS_CHARS_RE = qr/ \A ( [A-Za-z0-9_:]++ ) \z /x;
+my $CLASS_PART_RE  = qr/ \A [A-Za-z_] [A-Za-z0-9_]*+ \z /x;
 
 =head1 NAME
 
@@ -269,8 +267,14 @@ sub validate_class {
 	# The captured copy is returned, not the argument: it is the only text that
 	# has been matched against the pattern, so under taint mode (-T) it is
 	# untainted by the check that proves it safe.
-	my ($valid) = $class =~ $CLASS_RE
+	my ($valid) = $class =~ $CLASS_CHARS_RE
 		or die "Class::Shared: '$class' is not a valid class name\n";
+
+	# -1 keeps a trailing empty part, so "A::" and "A:::B" are refused.
+	foreach my $part (split /::/, $valid, -1) {
+		$part =~ $CLASS_PART_RE
+			or die "Class::Shared: '$class' is not a valid class name\n";
+	}
 
 	return $valid;
 }
@@ -314,6 +318,11 @@ sub read_secret {
 
 	open(my $fh, '<', $path) or die "Class::Shared: cannot read $path: $!\n";
 	my $secret = do { local $/; <$fh> };
+
+	# Some systems (macOS) let a directory be opened and only fail on the
+	# read.  Reading an empty file gives '', so undef means the read failed.
+	die "Class::Shared: cannot read $path: $!\n" unless defined $secret;
+
 	close($fh) or die "Class::Shared: cannot read $path: $!\n";
 
 	$secret = '' unless defined $secret;

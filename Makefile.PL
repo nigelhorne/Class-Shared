@@ -64,8 +64,7 @@ WriteMakefile(
 		'Socket'           => 0,
 		'Storable'         => 0,
 		'Time::HiRes'      => 0,
-	},
-	TEST_REQUIRES    => {
+	}, TEST_REQUIRES    => {
 		'File::Temp'          => 0,
 		'IO::Socket::SSL'     => 0,
 		'Lingua::Conjunction' => 0,
