@@ -28,6 +28,7 @@ use lib 't/lib';
 use Class::Shared::Backend ();
 use Class::Shared::Frontend;
 use Class::Shared::Protocol ();
+use Shared::Command qw(run_command);
 
 my $dir = tempdir(CLEANUP => 1);
 my $counter = 'Shared::Counter';
@@ -375,15 +376,15 @@ explicit(outcome(sub { Class::Shared::Backend->new(socket => '') }), qr/an argum
 
 # ----------------------------------------------------------------- the command
 
-my $cli = "$^X -Ilib -It/lib bin/class-shared";
+my @cli = ($^X, '-Ilib', '-It/lib', 'bin/class-shared');
 my $life = File::Spec->catdir($dir, 'life');
 
 sub command {
 	my ($arguments) = @_;
 
-	my $text = `timeout 25 $cli $arguments 2>&1 </dev/null`;
+	my ($status, $text) = run_command(25, @cli, split(' ', $arguments));
 
-	return ($? >> 8, $text);
+	return ($status, $text);
 }
 
 for my $case (

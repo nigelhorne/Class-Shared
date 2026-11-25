@@ -28,6 +28,7 @@ use lib 't/lib';
 use Class::Shared::Backend ();
 use Class::Shared::Frontend;
 use Class::Shared::Protocol ();
+use Shared::Command qw(run_command);
 
 # A client that is let through to a server that never answers would wait for
 # ever (a call has no time limit).  The alarm turns that hang into a failure.
@@ -90,10 +91,9 @@ if ($fake == 0) {
 }
 
 {
-	my $cli = "$^X -Ilib -It/lib bin/class-shared";
-	my $text = `timeout 25 $cli status --dir $open_dir 2>&1 </dev/null`;
+	my ($status, $text) = run_command(25, $^X, '-Ilib', '-It/lib', 'bin/class-shared', 'status', '--dir', $open_dir);
 
-	is($? >> 8, 1, 'the command does not connect either: exit 1');
+	is($status, 1, 'the command does not connect either: exit 1');
 	like($text, qr/will not connect: \S+ is writable by group or others/, '  and says why');
 
 	select(undef, undef, undef, 0.3);
@@ -259,9 +259,9 @@ PROGRAM
 
 		local $ENV{CS_PATH} = $path;
 		local $ENV{CS_CLASS} = 'Shared::Counter';
-		my $text = `timeout 25 $^X -T -Ilib -It/lib $script 2>&1 </dev/null`;
+		my ($status, $text) = run_command(25, $^X, '-T', '-Ilib', '-It/lib', $script);
 
-		is($? >> 8, 0, "under -T a frontend starts a backend and uses it, with $what");
+		is($status, 0, "under -T a frontend starts a backend and uses it, with $what");
 		like($text, qr/^tainted=0$/m, '  the class name that was checked is untainted');
 		like($text, qr/^inc=2$/m, '  and the object works');
 	}
@@ -272,7 +272,7 @@ PROGRAM
 		or BAIL_OUT("cannot write $nul_script: $!");
 	close($out) or BAIL_OUT("cannot close $nul_script: $!");
 
-	my $nul = `timeout 25 $^X -T -Ilib $nul_script 2>&1`;
+	my (undef, $nul) = run_command(25, $^X, '-T', '-Ilib', $nul_script);
 	like($nul, qr/may not contain a NUL byte/, 'a directory name with a NUL byte is refused, not truncated');
 }
 

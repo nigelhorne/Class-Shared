@@ -28,6 +28,7 @@ use lib 't/lib';
 
 use Class::Shared::Frontend;
 use Class::Shared::Protocol ();
+use Shared::Command qw(run_command);
 
 my $TIME_LIMIT = 10;    # seconds a refusal may take: tens of milliseconds are usual
 
@@ -147,9 +148,10 @@ $frontend->shared_shutdown;
 # script.  The bytes are the UTF-8 of two Arabic-Indic digits.
 my $arabic = "\xd9\xa8\xd9\xa0";
 
-my $text = `timeout 25 $^X -CA -Ilib -It/lib bin/class-shared start --listen tcp:host:$arabic --dir $dir/l 2>&1 </dev/null`;
+my ($start_status, $text) = run_command(25, $^X, '-CA', '-Ilib', '-It/lib', 'bin/class-shared',
+	'start', '--listen', "tcp:host:$arabic", '--dir', "$dir/l");
 
-is($? >> 8, 1, 'a port in other digits makes start exit 1');
+is($start_status, 1, 'a port in other digits makes start exit 1');
 like($text, qr/--listen wants tcp:HOST:PORT or unix:PATH/, '  saying what an address looks like');
 ok(!-e "$dir/l", '  and nothing was made');
 
