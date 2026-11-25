@@ -1,6 +1,6 @@
 ## Name
 
-Class::Shared - keep one instance of a class and let other processes call it
+Class::Shared - Keep one instance of a class and let other processes call it
 
 ## Synopsis
 
@@ -161,7 +161,7 @@ want to use a shared class.
 
 ## Functions
 
-None are exported.  They are used by the frontend and the backend, and may be
+None is exported.  They are used by the frontend and the backend, and may be
 useful when writing your own client.  Call each one with its full name, for
 example `Class::Shared::validate_class($name)`.
 

@@ -46,6 +46,15 @@ Revision history for Class-Shared
           class gives when called directly.  It is skipped unless
           Database::Abstraction is installed.  New test requirement:
           Test::Needs.
+        - Class::Shared::Backend->new: the rules between options are worked
+          out from three facts (is it TCP, is there a token, how many TLS
+          files are set) and not tested again in each branch; defaults come
+          from one merge.  A decision table is in the POD, and
+          t/16-backend-logic.t proves each case.  Behaviour is unchanged for
+          all of the 11,664 combinations checked, except that "log => '0'" is
+          now the log file called 0 (it was taken as not given), and it is
+          written (Log::Abstraction treats a false logger as none, so the path
+          is made absolute).  New test requirement: Test::Most.
         - t/14-template.t (Template) and t/15-date-manip.t (Date::Manip::Date)
           do the same for two more classes: one that needs a small wrapper
           class, because Template->process writes into a reference it is

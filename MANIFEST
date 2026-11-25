@@ -27,6 +27,7 @@ t/12-backend-log.t
 t/13-database-abstraction.t
 t/14-template.t
 t/15-date-manip.t
+t/16-backend-logic.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem

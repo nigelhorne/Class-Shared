@@ -28,6 +28,219 @@ our $UNIX_TRUST_REASON = 'its mode 0600 file already decides who may connect';
 
 my $CLASS_RE = qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/;
 
+=head1 NAME
+
+Class::Shared - Keep one instance of a class and let other processes call it
+
+=head1 SYNOPSIS
+
+The usual way to use this distribution is through L<Class::Shared::Frontend>.
+Each example below is a different real-world pattern.
+
+    # 1. The simplest case: share one class between many processes.
+    use Class::Shared::Frontend;
+
+    my $simple = Class::Shared::Frontend->new('Class::Simple');
+
+    $simple->foo('hello');          # runs in the shared backend
+    print $simple->foo(), "\n";     # prints "hello"
+
+    # 2. Give the class its constructor arguments.  They are used once, when
+    #    the object is made, and must be plain data (no code references).
+    my $logger = Class::Shared::Frontend->new('My::Logger',
+        ctor => [ level => 'debug', file => '/var/log/app.log' ],
+    );
+
+    my @all = $logger->lines();     # list context is kept
+    my $n   = $logger->lines();     # scalar context is kept too
+
+    # 3. Use a backend on another machine, over TLS with client certificates.
+    my $remote = Class::Shared::Frontend->new('Class::Simple',
+        host       => 'classhost.example.com',
+        port       => 7000,
+        tls_ca     => 'ca.pem',
+        tls_cert   => 'client.pem',
+        tls_key    => 'client-key.pem',
+        token_file => '/etc/class-shared/token',
+    );
+
+    # 4. Look after the backend yourself, from the shell.
+    #      class-shared start        # start it in the background
+    #      class-shared status       # ask what it is doing
+    #      class-shared stop         # ask it to stop
+
+    # 5. Use the helper functions to write your own client.
+    use Class::Shared ();
+
+    my $dir = Class::Shared::default_dir();
+    my ($ok, $why) = Class::Shared::ensure_dir($dir);
+    die "cannot use $dir: $why" unless $ok;
+
+    my $socket = Class::Shared::socket_path($dir);
+
+=head1 DESCRIPTION
+
+Perl has no equivalent of a shared library for classes: every process loads
+its own copy of F<Class/Simple.pm>, runs its own constructors and keeps its
+own state.  For a large class used by many short lived processes that is a lot
+of memory and a lot of start up time.
+
+Class::Shared moves the code into one process and lets the others keep a small
+proxy: a L<Class::Shared::Frontend> standing in for one object, held by a
+L<Class::Shared::Backend> that loaded the class once and does the work.
+
+    client process            singleton backend process
+    --------------            -------------------------
+    Frontend (object #1)  --socket-->  Class::Shared::Backend
+    Frontend (object #2)  --socket-->  |-- Class::Simple (code, loaded once)
+    Frontend (object #3)  --socket-->  |-- object #1
+                                       |-- object #2
+                                       `-- object #3
+
+So there is one copy of the class in the system and as many objects as there are
+frontends: C<< Class::Shared::Frontend->new('Class::Simple', ...) >> is one call
+to C<< Class::Simple->new(...) >>, in the backend.
+
+The arguments for that constructor go in C<ctor>, as an array reference:
+C<ctor =E<gt> [verbose =E<gt> 1]> is
+C<< Class::Simple->new(verbose =E<gt> 1) >>.  They are used once, when the
+frontend connects and asks the backend for the object, and they travel over the
+socket, so they must be plain data -- a code reference cannot be sent.  If the
+constructor dies, the frontend's C<new> dies too, naming the class and the error
+the backend reported.
+
+L<Class::Shared::Frontend> lists every option this constructor takes.
+
+The frontend never loads the target class, so it stays cheap.  An object lives
+as long as the connection that made it; when the frontend goes, the backend
+destroys the object, so its C<DESTROY> runs once, in the backend.
+
+One backend serves every class its clients ask for.  A client names the class it
+wants in its first message, the handshake, and the backend loads that module
+then, once per class, however many clients ask for it.  The backend may be on
+this machine (a unix socket, see C<Class::Shared::default_dir>) or on another
+one (TCP).
+
+Class::Shared is for Unix-like systems: unix sockets, POSIX directory
+permissions and C<fork> are what make a backend reachable, private and
+startable.  See L</PLATFORMS>.
+
+This page documents the helper functions that the frontend, the backend and the
+command line program share.  Start with L<Class::Shared::Frontend> if you only
+want to use a shared class.
+
+=head2 Words used in this documentation
+
+=over 4
+
+=item backend
+
+The one process that loads the class and holds the real objects.
+
+=item frontend
+
+The small stand-in object in your own process.  It forwards each method call to
+the backend and gives you back the answer.
+
+=item unix socket
+
+A special file that two programs on the same machine use to talk to each other.
+Its file permissions decide who may connect.
+
+=item TCP
+
+The way programs on different machines talk to each other over a network.  Here
+it is always protected by TLS.
+
+=item TLS
+
+Encryption for a network connection.  Each side also shows a certificate to
+prove who it is.
+
+=item certificate, CA
+
+A certificate is a small file that says "this key belongs to this name".  A CA
+(certificate authority) is the organisation, or your own private key pair, that
+signs certificates so others can trust them.
+
+=item fingerprint
+
+A short code (SHA-256) that identifies exactly one certificate.  A client can
+trust one certificate by its fingerprint instead of trusting a CA.
+
+=item token
+
+A shared secret, kept in a file, that both sides of a TCP connection know.  It
+proves that each message came from somebody who has the secret.
+
+=item frame
+
+One message on the wire: a length, then the data.  See
+L<Class::Shared::Protocol>.
+
+=item handshake
+
+The first message a client sends.  It names the class the client wants.
+
+=item context
+
+Perl's idea of what the caller wants back from a call: a list, one value, or
+nothing (void).  Class::Shared keeps the context you used.
+
+=back
+
+=head1 FUNCTIONS
+
+None is exported.  They are used by the frontend and the backend, and may be
+useful when writing your own client.  Call each one with its full name, for
+example C<Class::Shared::validate_class($name)>.
+
+A function either returns its answer or, when it cannot, dies with a message
+that begins C<Class::Shared:> and ends with a new line.  The one exception is
+C<ensure_dir>, which returns a pair so that the reason can be shown to the user.
+
+The schemas in each B<API SPECIFICATION> follow the conventions of
+L<Params::Validate::Strict> (for input) and L<Return::Set> (for output).  They
+describe the function for people and for tools.  The code does not call those
+two modules, and this distribution does not depend on them.
+
+=head2 validate_class
+
+    my $class = Class::Shared::validate_class($class);
+
+Checks that C<$class> looks like a Perl package name, and returns it unchanged.
+Use it before you pass a name to C<require> or build a file name from it.
+
+A valid name is one or more words joined by C<::>.  Each word starts with an
+English letter or an underscore and then has letters, digits or underscores.
+So C<Class::Simple> and C<My_Class2> are valid, and C<2Bad>, C<Foo::> and
+C<Foo-Bar> are not.
+
+B<Side effects:> none.
+
+B<Dies> with C<Class::Shared: no class name given> if C<$class> is undef or
+empty, and with C<Class::Shared: 'NAME' is not a valid class name> otherwise.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        class => {
+            type     => 'string',
+            position => 0,
+            optional => 0,
+            min      => 1,
+            matches  => qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/,
+        },
+    }
+
+=head4 Output
+
+    { type => 'string', matches => qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/ }
+
+=cut
+
 sub validate_class {
 	my $class = $_[0];
 
@@ -39,6 +252,36 @@ sub validate_class {
 
 	return $class;
 }
+
+=head2 read_secret
+
+    my $secret = Class::Shared::read_secret('/etc/class-shared/token');
+
+Reads a shared secret (a token) from a file and returns it.  The whole file is
+read as bytes.  White space at the end, including the final new line, is
+removed.  White space at the start, and any inside the secret, is kept.
+
+Never put a secret on a command line, where other users can see it.  Give its
+file name instead and let this function read it.
+
+B<Side effects:> opens, reads and closes the file.
+
+B<Dies> if no file name is given, if the file cannot be read, or if the secret
+is empty after the end of it has been trimmed.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        path => { type => 'string', position => 0, optional => 0, min => 1 },
+    }
+
+=head4 Output
+
+    { type => 'string', min => 1 }
+
+=cut
 
 # A shared secret for a backend listening on a network socket.  Never pass
 # secrets on a command line: give a file and let the caller read it.
@@ -271,247 +514,6 @@ sub check_socket_path {
 1;
 
 __END__
-
-=encoding utf8
-
-=head1 NAME
-
-Class::Shared - keep one instance of a class and let other processes call it
-
-=head1 SYNOPSIS
-
-The usual way to use this distribution is through L<Class::Shared::Frontend>.
-Each example below is a different real-world pattern.
-
-    # 1. The simplest case: share one class between many processes.
-    use Class::Shared::Frontend;
-
-    my $simple = Class::Shared::Frontend->new('Class::Simple');
-
-    $simple->foo('hello');          # runs in the shared backend
-    print $simple->foo(), "\n";     # prints "hello"
-
-    # 2. Give the class its constructor arguments.  They are used once, when
-    #    the object is made, and must be plain data (no code references).
-    my $logger = Class::Shared::Frontend->new('My::Logger',
-        ctor => [ level => 'debug', file => '/var/log/app.log' ],
-    );
-
-    my @all = $logger->lines();     # list context is kept
-    my $n   = $logger->lines();     # scalar context is kept too
-
-    # 3. Use a backend on another machine, over TLS with client certificates.
-    my $remote = Class::Shared::Frontend->new('Class::Simple',
-        host       => 'classhost.example.com',
-        port       => 7000,
-        tls_ca     => 'ca.pem',
-        tls_cert   => 'client.pem',
-        tls_key    => 'client-key.pem',
-        token_file => '/etc/class-shared/token',
-    );
-
-    # 4. Look after the backend yourself, from the shell.
-    #      class-shared start        # start it in the background
-    #      class-shared status       # ask what it is doing
-    #      class-shared stop         # ask it to stop
-
-    # 5. Use the helper functions to write your own client.
-    use Class::Shared ();
-
-    my $dir = Class::Shared::default_dir();
-    my ($ok, $why) = Class::Shared::ensure_dir($dir);
-    die "cannot use $dir: $why" unless $ok;
-
-    my $socket = Class::Shared::socket_path($dir);
-
-=head1 DESCRIPTION
-
-Perl has no equivalent of a shared library for classes: every process loads
-its own copy of F<Class/Simple.pm>, runs its own constructors and keeps its
-own state.  For a large class used by many short lived processes that is a lot
-of memory and a lot of start up time.
-
-Class::Shared moves the code into one process and lets the others keep a small
-proxy: a L<Class::Shared::Frontend> standing in for one object, held by a
-L<Class::Shared::Backend> that loaded the class once and does the work.
-
-    client process            singleton backend process
-    --------------            -------------------------
-    Frontend (object #1)  --socket-->  Class::Shared::Backend
-    Frontend (object #2)  --socket-->  |-- Class::Simple (code, loaded once)
-    Frontend (object #3)  --socket-->  |-- object #1
-                                       |-- object #2
-                                       `-- object #3
-
-So there is one copy of the class in the system and as many objects as there are
-frontends: C<< Class::Shared::Frontend->new('Class::Simple', ...) >> is one call
-to C<< Class::Simple->new(...) >>, in the backend.
-
-The arguments for that constructor go in C<ctor>, as an array reference:
-C<ctor =E<gt> [verbose =E<gt> 1]> is
-C<< Class::Simple->new(verbose =E<gt> 1) >>.  They are used once, when the
-frontend connects and asks the backend for the object, and they travel over the
-socket, so they must be plain data -- a code reference cannot be sent.  If the
-constructor dies, the frontend's C<new> dies too, naming the class and the error
-the backend reported.
-
-L<Class::Shared::Frontend> lists every option this constructor takes.
-
-The frontend never loads the target class, so it stays cheap.  An object lives
-as long as the connection that made it; when the frontend goes, the backend
-destroys the object, so its C<DESTROY> runs once, in the backend.
-
-One backend serves every class its clients ask for.  A client names the class it
-wants in its first message, the handshake, and the backend loads that module
-then, once per class, however many clients ask for it.  The backend may be on
-this machine (a unix socket, see C<Class::Shared::default_dir>) or on another
-one (TCP).
-
-Class::Shared is for Unix-like systems: unix sockets, POSIX directory
-permissions and C<fork> are what make a backend reachable, private and
-startable.  See L</PLATFORMS>.
-
-This page documents the helper functions that the frontend, the backend and the
-command line program share.  Start with L<Class::Shared::Frontend> if you only
-want to use a shared class.
-
-=head2 Words used in this documentation
-
-=over 4
-
-=item backend
-
-The one process that loads the class and holds the real objects.
-
-=item frontend
-
-The small stand-in object in your own process.  It forwards each method call to
-the backend and gives you back the answer.
-
-=item unix socket
-
-A special file that two programs on the same machine use to talk to each other.
-Its file permissions decide who may connect.
-
-=item TCP
-
-The way programs on different machines talk to each other over a network.  Here
-it is always protected by TLS.
-
-=item TLS
-
-Encryption for a network connection.  Each side also shows a certificate to
-prove who it is.
-
-=item certificate, CA
-
-A certificate is a small file that says "this key belongs to this name".  A CA
-(certificate authority) is the organisation, or your own private key pair, that
-signs certificates so others can trust them.
-
-=item fingerprint
-
-A short code (SHA-256) that identifies exactly one certificate.  A client can
-trust one certificate by its fingerprint instead of trusting a CA.
-
-=item token
-
-A shared secret, kept in a file, that both sides of a TCP connection know.  It
-proves that each message came from somebody who has the secret.
-
-=item frame
-
-One message on the wire: a length, then the data.  See
-L<Class::Shared::Protocol>.
-
-=item handshake
-
-The first message a client sends.  It names the class the client wants.
-
-=item context
-
-Perl's idea of what the caller wants back from a call: a list, one value, or
-nothing (void).  Class::Shared keeps the context you used.
-
-=back
-
-=head1 FUNCTIONS
-
-None are exported.  They are used by the frontend and the backend, and may be
-useful when writing your own client.  Call each one with its full name, for
-example C<Class::Shared::validate_class($name)>.
-
-A function either returns its answer or, when it cannot, dies with a message
-that begins C<Class::Shared:> and ends with a new line.  The one exception is
-C<ensure_dir>, which returns a pair so that the reason can be shown to the user.
-
-The schemas in each B<API SPECIFICATION> follow the conventions of
-L<Params::Validate::Strict> (for input) and L<Return::Set> (for output).  They
-describe the function for people and for tools.  The code does not call those
-two modules, and this distribution does not depend on them.
-
-=head2 validate_class
-
-    my $class = Class::Shared::validate_class($class);
-
-Checks that C<$class> looks like a Perl package name, and returns it unchanged.
-Use it before you pass a name to C<require> or build a file name from it.
-
-A valid name is one or more words joined by C<::>.  Each word starts with an
-English letter or an underscore and then has letters, digits or underscores.
-So C<Class::Simple> and C<My_Class2> are valid, and C<2Bad>, C<Foo::> and
-C<Foo-Bar> are not.
-
-B<Side effects:> none.
-
-B<Dies> with C<Class::Shared: no class name given> if C<$class> is undef or
-empty, and with C<Class::Shared: 'NAME' is not a valid class name> otherwise.
-
-=head3 API SPECIFICATION
-
-=head4 Input
-
-    {
-        class => {
-            type     => 'string',
-            position => 0,
-            optional => 0,
-            min      => 1,
-            matches  => qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/,
-        },
-    }
-
-=head4 Output
-
-    { type => 'string', matches => qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/ }
-
-=head2 read_secret
-
-    my $secret = Class::Shared::read_secret('/etc/class-shared/token');
-
-Reads a shared secret (a token) from a file and returns it.  The whole file is
-read as bytes.  White space at the end, including the final new line, is
-removed.  White space at the start, and any inside the secret, is kept.
-
-Never put a secret on a command line, where other users can see it.  Give its
-file name instead and let this function read it.
-
-B<Side effects:> opens, reads and closes the file.
-
-B<Dies> if no file name is given, if the file cannot be read, or if the secret
-is empty after the end of it has been trimmed.
-
-=head3 API SPECIFICATION
-
-=head4 Input
-
-    {
-        path => { type => 'string', position => 0, optional => 0, min => 1 },
-    }
-
-=head4 Output
-
-    { type => 'string', min => 1 }
 
 =head2 normalise_fingerprint
 
@@ -1188,6 +1190,8 @@ L<Pod::Github> is a development requirement, so C<cpanm --installdeps
 =head1 AUTHOR
 
 Nigel Horne, C<< <njh at nigelhorne.com> >>
+
+=encoding utf8
 
 =head1 FORMAL SPECIFICATION
 

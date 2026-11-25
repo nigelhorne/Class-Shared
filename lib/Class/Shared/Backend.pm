@@ -95,6 +95,19 @@ my %OPTION_SCHEMA = (
 # The two entries above that only locate settings, and so are never kept.
 my %LOCATES_SETTINGS = (config_file => 1, config_dirs => 1);
 
+# The options that are the backend's own.  Worked out once, because the schema
+# does not change: Premise 1: %OPTION_SCHEMA is fixed when the module loads.
+# Premise 2: what is a backend option depends only on the schema.  Conclusion:
+# there is no reason to filter it again on every call to new().
+my @BACKEND_OPTIONS = grep { !$LOCATES_SETTINGS{$_} } sort keys %OPTION_SCHEMA;
+
+# A listener's TLS identity is these three files together.
+my @TLS_FILES = qw(tls_cert tls_key tls_ca);
+
+# Every refusal from new() starts with this, so a caller can rely on it
+# (bin/class-shared removes it before showing the message to a person).
+my $REFUSAL_PREFIX = __PACKAGE__ . '->new: ';
+
 # The backend loads each class a client names, once, and holds many objects
 # made from them: one per frontend.  Clients talk to it over a unix socket or
 # TCP.
@@ -106,56 +119,83 @@ sub new {
 
 	my ($host, $port, $socket) = @opt{qw(host port socket)};
 
-	if (defined $host || defined $port) {
-		die __PACKAGE__, "->new: a TCP listener needs both host and port\n"
+	# Premise 1: _options leaves no undef value in %opt, so "defined" means "was
+	# given".  Premise 2: an empty token or TLS file name is let through the
+	# schema on purpose, so "given" is not "set": a value is set when it is not
+	# empty.  Conclusion: each of the three facts below is worked out once, and
+	# every rule after this reads it, where the rules used to repeat the test.
+	my $tcp       = defined $host || defined $port;
+	my $has_token = length($opt{token} // '') ? 1 : 0;
+	my $tls_set   = grep { length($opt{$_} // '') } @TLS_FILES;
+
+	my $control;
+
+	if ($tcp) {
+		_refuse('a TCP listener needs both host and port')
 			unless defined $host && defined $port;
-		die __PACKAGE__, "->new: use either socket or host/port, not both\n"
+
+		_refuse('use either socket or host/port, not both')
 			if defined $socket;
 
 		# A TCP port is reachable by anybody who can route to it, and thawing
 		# is running code, so refuse to be the listener that would deserialise
 		# whatever a stranger sends.
-		my $token = $opt{token};
-		die "Class::Shared::Backend->new: a TCP listener needs a token: "
-			. "without one it would thaw whatever arrives\n"
-			unless defined $token && length $token;
+		_refuse('a TCP listener needs a token: without one it would thaw whatever arrives')
+			unless $has_token;
 
 		# TLS is not a wrapper here but the listener itself: this certificate
 		# proves who the backend is, tls_ca decides which client certificates
-		# are welcome, and a client without one is never accepted.
-		die "Class::Shared::Backend->new: a TCP listener needs tls_cert, "
-			. "tls_key and tls_ca: without them the traffic would be readable "
-			. "to anyone who can route to it\n"
-			if grep { !defined $opt{$_} || !length $opt{$_} } qw(tls_cert tls_key tls_ca);
+		# are welcome, and a client without one is never accepted.  All three
+		# are needed, so the number that are set must be the number there are.
+		_refuse('a TCP listener needs tls_cert, tls_key and tls_ca: '
+			. 'without them the traffic would be readable to anyone who can route to it')
+			unless $tls_set == @TLS_FILES;
+
+		# Premise: a TCP listener has no socket (refused above).  Its lock, pid
+		# file and log still live in the directory a socket would have used.
+		$control = Class::Shared::socket_path($opt{dir});
 	} else {
+		# Premise: the guards above did not run, so there is no host or port.
+		# Conclusion: the socket is either the one given or the default one, and
+		# it is also the control path, so it is worked out once, here.
 		$socket = defined $socket
 			? Class::Shared::check_socket_path($socket)
 			: Class::Shared::socket_path($opt{dir});
+		$control = $socket;
 
 		# The socket is mode 0600 in a directory only its owner can write to,
 		# so the kernel has already decided who may connect: a digest on every
 		# frame would buy nothing here and cost 32 bytes on each message.
-		die "Class::Shared::Backend->new: a unix socket needs no token: "
-			. "$Class::Shared::UNIX_TRUST_REASON\n"
-			if defined $opt{token} && length $opt{token};
+		_refuse("a unix socket needs no token: $Class::Shared::UNIX_TRUST_REASON")
+			if $has_token;
 
-		die "Class::Shared::Backend->new: a unix socket needs no TLS: "
-			. "$Class::Shared::UNIX_TRUST_REASON\n"
-			if grep { defined $opt{$_} && length $opt{$_} } qw(tls_cert tls_key tls_ca);
+		_refuse("a unix socket needs no TLS: $Class::Shared::UNIX_TRUST_REASON")
+			if $tls_set;
 	}
 
-	my $control = defined $socket
-		? $socket
-		: Class::Shared::socket_path($opt{dir});
-
-	my $max_queued = defined $opt{max_queued} ? $opt{max_queued} : $MAX_QUEUED;
+	# What is used when an option is not given.  Read here, each time, and not
+	# once when the module loads, because these are package variables that a
+	# program may set before it calls new().  Premise 1 makes "not given" the
+	# same as "not in %opt", so one merge replaces a test for each option; and
+	# because the schema never allows a zero here, the merge cannot differ from
+	# the "x || default" it replaces, except for a log that is called "0", which
+	# "||" wrongly treated as not given.
+	my %set = (
+		max_clients       => $DEFAULT_MAX_CLIENTS,
+		max_objects       => $DEFAULT_MAX_OBJECTS,
+		max_queued        => $MAX_QUEUED,
+		write_timeout     => $WRITE_TIMEOUT,
+		handshake_timeout => $HANDSHAKE_TIMEOUT,
+		start_timeout     => $DEFAULT_START_TIMEOUT,
+		daemonize         => 0,
+		log               => $control . '.log',
+		%opt,
+	);
 
 	# Four times one client's bound by default: enough that a few clients may
 	# each be holding a maximum-size reply, small enough that a few hundred
 	# cannot each be holding one.
-	my $max_queued_total = defined $opt{max_queued_total}
-		? $opt{max_queued_total}
-		: $max_queued * 4;
+	$set{max_queued_total} //= $set{max_queued} * 4;
 
 	my $self = bless {
 		classes       => {},
@@ -168,21 +208,18 @@ sub new {
 		tls_ca        => $opt{tls_ca},
 		dir_hint      => $opt{dir},
 		control       => $control,
-		log           => $opt{log} || ($control . '.log'),
-		daemonize     => $opt{daemonize} ? 1 : 0,
-		max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
-		max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
-		max_queued    => $max_queued,
-		max_queued_total => $max_queued_total,
-		write_timeout => defined $opt{write_timeout}
-			? $opt{write_timeout}
-			: $WRITE_TIMEOUT,
-		handshake_timeout => defined $opt{handshake_timeout}
-			? $opt{handshake_timeout}
-			: $HANDSHAKE_TIMEOUT,
-		start_timeout => defined $opt{start_timeout}
-			? $opt{start_timeout}
-			: $DEFAULT_START_TIMEOUT,
+		log           => $set{log},
+
+		# The schema says a boolean is 0 or 1 once it has been checked, so
+		# nothing here has to turn "true" into 1.
+		daemonize         => $set{daemonize},
+		max_clients       => $set{max_clients},
+		max_objects       => $set{max_objects},
+		max_queued        => $set{max_queued},
+		max_queued_total  => $set{max_queued_total},
+		write_timeout     => $set{write_timeout},
+		handshake_timeout => $set{handshake_timeout},
+		start_timeout     => $set{start_timeout},
 		objects       => {},
 		clients       => {},
 		queued        => 0,
@@ -202,6 +239,16 @@ sub new {
 	}, $class;
 
 	return $self;
+}
+
+# Purpose:       refuse the arguments of new() in this module's usual form.
+# Entry:         $why is the reason, without the prefix or a line break.
+# Exit status:   none: it dies.
+# Side effects:  none.
+sub _refuse {
+	my ($why) = @_;
+
+	die $REFUSAL_PREFIX . $why . "\n";
 }
 
 # Purpose:       work out the options for one backend from three places, in
@@ -230,23 +277,25 @@ sub _options {
 	# Object::Configure gives the caller's values the LOWEST priority and adds
 	# keys of its own (a logger, the config path).  So it is given only the
 	# place to look, and only the options this class knows are taken back.
-	# The backend writes its own log, so no logger is wanted from it.
-	my $configured = Object::Configure::configure($class, {
-		logger => 'NULL',
-		map { $_ => $explicit->{$_} } grep { exists $explicit->{$_} } keys %LOCATES_SETTINGS,
-	});
+	# The backend writes its own log, so no logger is wanted from it.  The two
+	# locators are taken out of $explicit as they are passed on, so what is left
+	# in it is exactly what is kept.
+	my %locate = map { $_ => delete $explicit->{$_} }
+		grep { exists $explicit->{$_} } keys %LOCATES_SETTINGS;
+
+	my $configured = Object::Configure::configure($class, { logger => 'NULL', %locate });
 
 	my %site = map { $_ => $configured->{$_} }
-		grep { defined $configured->{$_} && !$LOCATES_SETTINGS{$_} }
-		keys %OPTION_SCHEMA;
+		grep { defined $configured->{$_} } @BACKEND_OPTIONS;
 
 	# Values from a file or the environment arrive as text, so they are checked
-	# (and turned into numbers) in the same way as the caller's.
-	my $site = _validate(\%site, 'a configured value');
+	# (and turned into numbers) in the same way as the caller's.  Premise: every
+	# entry in the schema is optional.  Premise: nothing was configured.
+	# Conclusion: there is nothing to check and nothing to turn into a number,
+	# so the checker is not called for an empty set.
+	my $site = %site ? _validate(\%site, 'a configured value') : {};
 
-	my %kept = map { $_ => $explicit->{$_} } grep { !$LOCATES_SETTINGS{$_} } keys %{$explicit};
-
-	return { %{$site}, %kept };
+	return { %{$site}, %{$explicit} };
 }
 
 # Purpose:       check one set of options against %OPTION_SCHEMA.
@@ -1274,7 +1323,14 @@ sub _log {
 	# backend) can be told apart, and the pid is part of the format, so a
 	# logger inherited across fork() would name the wrong process.
 	if (!defined $self->{logger} || $self->{logger_pid} != $$) {
-		my $path = $self->{log} || ($self->{control} . '.log');
+		# Premise 1: new() always sets log, to the default if it was not given,
+		# so there is nothing to fall back on here.  Premise 2: Log::Abstraction
+		# takes a logger that is false in Perl to mean "no logger", and "0" is a
+		# valid file name that is false.  Premise 3: an absolute path is never
+		# false.  Conclusion: the path is made absolute, which names the same
+		# file as before (a relative path was always opened from the directory
+		# in force at the time) and cannot be mistaken for "no logger".
+		my $path = File::Spec->rel2abs($self->{log});
 
 		$self->{logger} = eval {
 			Log::Abstraction->new(
@@ -1414,9 +1470,10 @@ digest at all.  See L</SECURITY>.
 
 =item log
 
-Log file.  Defaults to the control path with C<.log> appended.  Every client
-the backend drops is written there with the reason it was dropped.  See
-L</LOG>.
+Log file.  Defaults to the control path with C<.log> appended, when you give
+none.  Every client the backend drops is written there with the reason it was
+dropped.  A relative name is taken from the directory the backend is in when it
+first writes.  See L</LOG>.
 
 =item daemonize
 
@@ -1528,6 +1585,38 @@ C<socket> together with C<host>/C<port>; a TCP listener without a token or
 without all three TLS files; a unix socket with a token or TLS files; or an
 over-long socket path.  (A perl without unix sockets is reported by C<run>, or
 by C<new> when it has to work out the default socket path.)
+
+=head3 DECISION TABLE
+
+The rules are checked in this order, and the first one that applies is the one
+you read.  A value that is empty counts as not set, so C<token =E<gt> ''> is
+no token, and an empty TLS file name is a missing one.
+
+    host or port given?   rule                                     refused with
+    -------------------   --------------------------------------   ----------------------------
+    one of them only      a TCP listener needs both                needs both host and port
+    both, and a socket    use host/port or a socket, not both      either socket or host/port
+    both, no token        a TCP listener needs a token             needs a token
+    both, TLS files < 3   a TCP listener needs all three           needs tls_cert, tls_key ...
+    both, all of it       accepted as a TCP listener
+    neither, path too     the socket must fit in an address        more than the N allowed
+      long
+    neither, a token      a unix socket needs no token             a unix socket needs no token
+    neither, a TLS file   a unix socket needs no TLS               a unix socket needs no TLS
+    neither               accepted as a unix listener
+
+Three plain-English steps show why the table is complete.  A listener is TCP if
+it has a host or a port, and unix if it has neither, so every input is in exactly
+one half.  In the TCP half a token and all three TLS files are required and a
+socket is not allowed, so each missing or extra thing has one rule that
+refuses it.  In the unix half a token and every TLS file are forbidden, so
+each extra thing has one rule that refuses it.
+
+An option that you do not give gets its default.  An option that you do give
+keeps its value even when that value is false, so C<write_timeout =E<gt> 0> is a
+timeout of 0 and not the default, and C<log =E<gt> '0'> is a log file called
+C<0>.  The defaults are read when you call C<new>, so a program may set a package
+variable such as C<$Class::Shared::Backend::WRITE_TIMEOUT> before it does.
 
 =head3 API SPECIFICATION
 
