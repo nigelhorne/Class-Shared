@@ -106,6 +106,19 @@ sub _read_exact {
 	my $buffer = '';
 
 	while (length($buffer) < $length) {
+		# A TLS socket can be holding decrypted bytes that select cannot
+		# see, because they arrived in a record already read from the kernel.
+		# Take those before waiting for more.
+		if ($fh->can('pending') && $fh->pending) {
+			my $pending = sysread($fh, $buffer, $length - length($buffer),
+				length($buffer));
+
+			return (undef, "read failed: $!") if !defined $pending;
+			return (undef, 'connection closed by peer') if $pending == 0;
+
+			next;
+		}
+
 		if (defined $timeout) {
 			my $rin = '';
 			vec($rin, fileno($fh), 1) = 1;
