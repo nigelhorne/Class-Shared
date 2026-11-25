@@ -1,5 +1,6 @@
 ---
 # Created by App::GHGen::PerlCustomizer
+# Options: --versions=5.44,5.40,5.26
 name: Perl CI
 
 "on":

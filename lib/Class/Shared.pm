@@ -6,7 +6,9 @@ use warnings;
 use File::Basename ();
 use File::Spec ();
 
-our $VERSION = '0.001.0';
+# version->declare here alone: this is VERSION_FROM, and with it MakeMaker
+# writes 0.001.0 into META; a plain dotted string becomes v0.001.0 there.
+use version; our $VERSION = version->declare('0.001.0');
 
 # Bumped whenever the wire protocol changes in an incompatible way.  2 added
 # the HMAC-SHA-256 digest every frame carries when a token is in use.
@@ -19,12 +21,12 @@ our $MAX_SOCKET_PATH = 100;
 my $CLASS_RE = qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/;
 
 sub validate_class {
-	my ($class) = @_;
+	my $class = $_[0];
 
-	die "Class::Shared: no class name given\n"
+	die 'Class::Shared: no class name given'
 		unless defined $class && length $class;
 
-	die "Class::Shared: '$class' is not a valid class name\n"
+	die __PACKAGE__, ": '$class' is not a valid class name"
 		unless $class =~ $CLASS_RE;
 
 	return $class;
@@ -33,11 +35,11 @@ sub validate_class {
 # A shared secret for a backend listening on a network socket.  Never pass
 # secrets on a command line: give a file and let the caller read it.
 sub read_secret {
-	my ($path) = @_;
+	my $path = $_[0];
 
-	die "Class::Shared: no token file given\n" unless defined $path && length $path;
+	die __PACKAGE__, ': no token file given' unless defined $path && length $path;
 
-	open(my $fh, '<', $path) or die "Class::Shared: cannot read $path: $!\n";
+	open(my $fh, '<', $path) or die __PACKAGE__, ": cannot read $path: $!";
 	my $secret = do { local $/; <$fh> };
 	close $fh;
 
@@ -61,9 +63,9 @@ my $FINGERPRINT_RE = qr{
 }x;
 
 sub normalise_fingerprint {
-	my ($value) = @_;
+	my $value = $_[0];
 
-	die "Class::Shared: no TLS fingerprint given\n"
+	die __PACKAGE__, ': no TLS fingerprint given'
 		unless defined $value && length $value;
 
 	my ($hex) = $value =~ $FINGERPRINT_RE
