@@ -2,8 +2,12 @@ Revision history for Class-Shared
 
 0.01    2026-11-24
         - First release.
-        - Class::Shared::Backend loads the class once and holds many objects,
-          one per client connection, over a unix socket or TCP.
+        - Class::Shared::Backend holds many objects, one per client connection,
+          over a unix socket or TCP, and serves every class its clients ask
+          for: a client names the class in its handshake and the backend
+          require()s and import()s it then, once per class, so there is one
+          socket per directory rather than one per class and no --class on the
+          command line.
         - Class::Shared::Frontend stands in for one object, forwarding method
           calls and preserving calling context, and never loads the class.
         - Objects belong to the connection that created them, so a client that
@@ -40,3 +44,10 @@ Revision history for Class-Shared
           connection that ends other than by a clean shutdown of its object
           leaves a trace there.
         - bin/class-shared for serve, status, stop and path.
+        - Unix-only, and says so: MSWin32 has no unix domain sockets, no
+          directory permissions worth reading (its stat reports the same mode
+          bits everywhere) and no fork that can start a listener, so
+          Class::Shared::ensure_dir and socket_path die there with that
+          explanation instead of a misleading "writable by group or others".
+          The POD has a PLATFORMS section, and t/07-platform.t checks the
+          refusal on every platform.

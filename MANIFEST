@@ -18,6 +18,8 @@ t/03-cli.t
 t/04-tcp.t
 t/05-cli-tcp.t
 t/06-real-class.t
+t/07-platform.t
+t/08-concurrent-spawn.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem
@@ -33,3 +35,4 @@ t/certs/server-key.pem
 t/certs/server.pem
 t/lib/Shared/Conjunction.pm
 t/lib/Shared/Counter.pm
+t/lib/Shared/Tally.pm

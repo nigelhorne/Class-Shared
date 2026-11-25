@@ -43,9 +43,15 @@ The frontend never loads the target class, so it stays cheap.  An object lives
 as long as the connection that made it; when the frontend goes, the backend
 destroys the object, so its `DESTROY` runs once, in the backend.
 
-One backend serves one class, and it is started with the class name baked in,
-so a client cannot make it instantiate anything else.  It may be on this machine
-(a unix socket, see `Class::Shared::default_dir`) or on another one (TCP).
+One backend serves every class its clients ask for.  A client names the class it
+wants in its first message, the handshake, and the backend loads that module
+then, once per class, however many clients ask for it.  The backend may be on
+this machine (a unix socket, see `Class::Shared::default_dir`) or on another
+one (TCP).
+
+Class::Shared is for Unix-like systems: unix sockets, POSIX directory
+permissions and `fork` are what make a backend reachable, private and
+startable.  See ["PLATFORMS"](#platforms).
 
 ## Functions
 
@@ -71,11 +77,12 @@ useful when writing your own client.
     others can write to, is refused: anybody who can create files there could
     impersonate the backend.
 
-- Class::Shared::socket\_path($class, $dir)
+- Class::Shared::socket\_path($dir)
 
-    Returns the socket path for `$class`, mangling the name and appending an
-    FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
-    result would be too long for a `sockaddr_un`.
+    Returns the path of the backend socket in `$dir`, or in the default directory
+    if none is given.  There is one socket for every class, because the class is
+    chosen by the client rather than by the listener.  Dies if the result would be
+    too long for a `sockaddr_un`.
 
 - Class::Shared::client\_tls\_options(%options)
 
@@ -174,7 +181,7 @@ openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
 The listener is given three of the files:
 
 ```
-class-shared serve --class Class::Simple --listen tcp:0.0.0.0:7000 \
+class-shared serve --listen tcp:0.0.0.0:7000 \
     --token-file /etc/class-shared/token \
     --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
 ```
@@ -204,8 +211,8 @@ a second CA and impostor certificates, for the tests.
 - A unix socket is not encrypted: file permissions decide who may connect, and
 anything that can read the socket can read the traffic on it.  TCP is always
 TLS, and has no unencrypted mode.
-- One backend per class, and it answers one call at a time, so a slow method
-delays every client of that class.
+- One backend per directory answers one call at a time, so a slow method delays
+every client of that backend, whatever class they are using.
 - Each frontend is one connection: many objects in one process means many file
 descriptors in both processes.
 - Arguments and return values travel through [Storable](https://metacpan.org/pod/Storable); filehandles, code
@@ -219,6 +226,28 @@ handle) sees the backend's environment, not yours: its `%ENV` is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
+
+## Platforms
+
+Unix-like systems only.  A backend needs three things this distribution cannot
+do without:
+
+- unix domain sockets, which is how a frontend reaches a backend on this machine
+and starts one when there is none;
+- POSIX directory permissions, which are the whole of a unix socket's
+authentication: the socket is mode 0600 inside a directory only its owner can
+write to, so the kernel decides who may connect;
+- a real `fork`, which is how a frontend starts a backend in the background.
+
+MSWin32 has none of them -- its `stat` reports the same mode bits for every
+directory, so no directory there can be shown to be owner-only -- and is not
+supported.  It does not fail as if the directory you passed were at fault:
+`Class::Shared::ensure_dir` and `Class::Shared::socket_path` die with that
+explanation whenever they are reached on Windows.
+
+The wire protocol, [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol), is pure Perl and loads on any
+platform, so it can be used to talk to a backend from a machine that cannot run
+one.
 
 ## See Also
 

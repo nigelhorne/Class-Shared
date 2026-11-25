@@ -12,6 +12,15 @@ use lib 't/lib';
 # their frames too, so check them against a TLS, token-protected TCP backend
 # rather than the unix socket t/03-cli.t uses.
 
+# That backend is started with fork() and exec(), which Win32 cannot use to run
+# a listener, and its directory must be owner-only, which its permission bits
+# never say.
+BEGIN {
+	plan skip_all => 'this backend is started with fork() in an owner-only '
+		. "directory, neither of which MSWin32 offers"
+		if $^O eq 'MSWin32';
+}
+
 BEGIN {
 	eval { require IO::Socket::SSL; 1 }
 		or plan skip_all => 'IO::Socket::SSL is required for the TCP tests';
@@ -68,7 +77,6 @@ if ($pid == 0) {
 	no warnings 'exec';    # exec() does not return when it works
 	exec(
 		$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
-		'--class', 'Shared::Counter',
 		'--listen', "tcp:127.0.0.1:$port",
 		'--token-file', $token_file,
 		'--tls-cert', $pem{server},
@@ -112,23 +120,23 @@ my $tls = "--tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-ca $pem{ca
 my $where = "--host 127.0.0.1 --port $port --token-file $token_file $tls";
 
 # status.
-my $status = `$cli status --class Shared::Counter $where 2>&1`;
+my $status = `$cli status $where 2>&1`;
 is($?, 0, 'status exits successfully over TCP') or diag $status;
-like($status, qr/Shared::Counter: pid $pid\b/, 'status names the backend we started');
+like($status, qr/^pid $pid\b/m, 'status names the backend we started');
 like($status, qr/address: 127\.0\.0\.1:$port/, 'and the TCP address');
 like($status, qr/0 object\(s\)/, 'with no objects, since status makes none');
 like($status, qr/\d+ call\(s\)/, 'and its call counter');
 like($status, qr/clients: \d+/, 'and its client count');
 
 # The CLI signs its frames, so a secret it does not have gets it nowhere.
-my $wrong = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $bad_token_file $tls 2>&1`;
+my $wrong = `$cli status --host 127.0.0.1 --port $port --token-file $bad_token_file $tls 2>&1`;
 isnt($?, 0, 'status with the wrong token fails');
 like($wrong, qr/failed authentication/, 'and says the frames did not authenticate');
 
 # A client certificate the backend will not accept closes the connection during
 # the handshake, before any frame: say that, rather than reporting a closed
 # stream that suggests nothing in particular.
-my $bad_cert = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{'other-client'} --tls-key $pem{'other-client-key'} --tls-ca $pem{ca} 2>&1`;
+my $bad_cert = `$cli status --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{'other-client'} --tls-key $pem{'other-client-key'} --tls-ca $pem{ca} 2>&1`;
 isnt($?, 0, 'status with a client certificate the backend refuses fails');
 like($bad_cert, qr/refused this client's certificate/,
 	'and says the certificate was refused');
@@ -136,16 +144,16 @@ like($bad_cert, qr/--tls-cert.*--tls-ca/, 'naming the options worth checking');
 
 # The CLI verifies the backend before it sends a frame, so a CA that did not
 # sign it is the end of the attempt.
-my $untrusted = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-ca $pem{'other-ca'} 2>&1`;
+my $untrusted = `$cli status --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-ca $pem{'other-ca'} 2>&1`;
 isnt($?, 0, 'status with a CA that did not sign the backend fails');
 like($untrusted, qr/TLS failed|certificate verify/i, 'and says the certificate did not verify');
 
 # And it will not talk in the clear to a backend that speaks TLS.
-my $no_tls = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file 2>&1`;
+my $no_tls = `$cli status --host 127.0.0.1 --port $port --token-file $token_file 2>&1`;
 isnt($?, 0, 'status without TLS options fails');
 like($no_tls, qr/--tls-cert/, 'and names the options it needs');
 
-my $unsigned = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port $tls 2>&1`;
+my $unsigned = `$cli status --host 127.0.0.1 --port $port $tls 2>&1`;
 isnt($?, 0, 'status with no token fails');
 
 my ($unsigned_first) = split /\n/, $unsigned;
@@ -155,7 +163,7 @@ like($unsigned_first,
 like($unsigned, qr/^detail: .*(?:deserialise|read the response)/m,
 	'keeping the underlying complaint on a detail line');
 
-my $unsigned_stop = `$cli stop --class Shared::Counter --host 127.0.0.1 --port $port $tls 2>&1`;
+my $unsigned_stop = `$cli stop --host 127.0.0.1 --port $port $tls 2>&1`;
 isnt($?, 0, 'stop with no token fails');
 like($unsigned_stop, qr/may require a token/, 'and gives stop the same hint');
 
@@ -164,29 +172,29 @@ like($unsigned_stop, qr/may require a token/, 'and gives stop the same hint');
 my $pin = fingerprint($pem{server});
 my $pinned = "--tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-fingerprint $pin";
 
-my $pinned_status = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file $pinned 2>&1`;
+my $pinned_status = `$cli status --host 127.0.0.1 --port $port --token-file $token_file $pinned 2>&1`;
 is($?, 0, 'status works with a pinned fingerprint instead of a CA')
 	or diag $pinned_status;
-like($pinned_status, qr/Shared::Counter: pid $pid\b/, 'and reaches the right backend');
+like($pinned_status, qr/^pid $pid\b/m, 'and reaches the right backend');
 
 my $bad_pin = fingerprint($pem{'other-server'});
-my $wrong_pin = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-fingerprint $bad_pin 2>&1`;
+my $wrong_pin = `$cli status --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{client} --tls-key $pem{'client-key'} --tls-fingerprint $bad_pin 2>&1`;
 isnt($?, 0, 'status with a pin that does not match the backend fails');
 like($wrong_pin, qr/TLS failed|certificate verify/i,
 	'and says the certificate did not verify');
 
-my $both = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file $tls --tls-fingerprint $pin 2>&1`;
+my $both = `$cli status --host 127.0.0.1 --port $port --token-file $token_file $tls --tls-fingerprint $pin 2>&1`;
 isnt($?, 0, 'status with both a CA and a pin fails');
 like($both, qr/not both/, 'because they are alternatives');
 
 # A backend that survived the refusals still answers the real thing.
-my $again = `$cli status --class Shared::Counter $where 2>&1`;
+my $again = `$cli status $where 2>&1`;
 is($?, 0, 'status still works after the refusals') or diag $again;
 
 # stop.
-my $stopped = `$cli stop --class Shared::Counter $where 2>&1`;
+my $stopped = `$cli stop $where 2>&1`;
 is($?, 0, 'stop exits successfully over TCP') or diag $stopped;
-like($stopped, qr/stopped Shared::Counter/, 'stop says what it stopped');
+like($stopped, qr/^stopped$/m, 'stop says it stopped');
 
 waitpid($pid, 0);
 is($?, 0, 'the backend we stopped exited cleanly');

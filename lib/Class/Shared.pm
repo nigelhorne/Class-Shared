@@ -132,10 +132,31 @@ sub default_dir {
 }
 
 # Create $dir if needed and make sure nobody else can drop a socket in it.
+# Windows has no unix domain socket, no directory permissions worth reading
+# (its stat() reports the same mode bits for every directory, so "writable by
+# group or others" is always true there) and no fork that can start a listener,
+# so nothing here can work on it.  Say that where it is tried, rather than
+# blaming the directory the caller passed.  The platform is an argument so that
+# the refusal can be tested on a machine that is not Windows.
+sub _posix_only {
+	my ($what, $os) = @_;
+
+	$os = $^O unless defined $os;
+
+	return if $os ne 'MSWin32';
+
+	die "Class::Shared: $what is not available on MSWin32: it has no unix "
+		. "domain sockets, no directory permissions that keep other users out, "
+		. "and no fork that can start a listener.  This distribution is "
+		. "Unix-only (see PLATFORMS)\n";
+}
+
 sub ensure_dir {
 	my ($dir) = @_;
 
 	die "Class::Shared: no directory given\n" unless defined $dir && length $dir;
+
+	_posix_only('an owner-only directory');
 
 	if (!-d $dir) {
 		mkdir($dir, 0700) or return (0, "cannot create $dir: $!");
@@ -153,23 +174,17 @@ sub ensure_dir {
 	return (1);
 }
 
-# One socket per class.  The hash keeps names from colliding after the
-# mangling, and the backend re-checks the class name during the handshake, so
-# a collision can never hand back the wrong class.
+# One socket for every class.  The backend behind it is told which class a
+# client wants when that client connects, so the path names no class and one
+# backend can serve as many as are asked for.
 sub socket_path {
-	my ($class, $dir) = @_;
+	my ($dir) = @_;
 
-	validate_class($class);
+	_posix_only('a unix socket');
 
 	$dir = default_dir(dir => $dir);
 
-	my $stem = $class;
-	$stem =~ s/[^A-Za-z0-9_.-]+/-/g;
-	$stem =~ s/\A-+//;
-	$stem =~ s/-+\z//;
-	$stem = substr($stem, 0, 48) if length($stem) > 48;
-
-	my $path = File::Spec->catfile($dir, sprintf('%s-%08x.sock', $stem, _fnv32($class)));
+	my $path = File::Spec->catfile($dir, 'class-shared.sock');
 
 	if (length($path) > $MAX_SOCKET_PATH) {
 		die sprintf("Class::Shared: socket path '%s' is %d characters, more than the %d allowed; "
@@ -178,20 +193,6 @@ sub socket_path {
 	}
 
 	return $path;
-}
-
-# 32 bit FNV-1a, so that both ends can derive the same path without
-# depending on a digest module.
-sub _fnv32 {
-	my ($string) = @_;
-
-	my $hash = 0x811c9dc5;
-	for my $byte (unpack('C*', $string)) {
-		$hash ^= $byte;
-		$hash = ($hash * 0x01000193) & 0xFFFFFFFF;
-	}
-
-	return $hash;
 }
 
 1;
@@ -239,9 +240,15 @@ The frontend never loads the target class, so it stays cheap.  An object lives
 as long as the connection that made it; when the frontend goes, the backend
 destroys the object, so its C<DESTROY> runs once, in the backend.
 
-One backend serves one class, and it is started with the class name baked in,
-so a client cannot make it instantiate anything else.  It may be on this machine
-(a unix socket, see C<Class::Shared::default_dir>) or on another one (TCP).
+One backend serves every class its clients ask for.  A client names the class it
+wants in its first message, the handshake, and the backend loads that module
+then, once per class, however many clients ask for it.  The backend may be on
+this machine (a unix socket, see C<Class::Shared::default_dir>) or on another
+one (TCP).
+
+Class::Shared is for Unix-like systems: unix sockets, POSIX directory
+permissions and C<fork> are what make a backend reachable, private and
+startable.  See L</PLATFORMS>.
 
 =head1 FUNCTIONS
 
@@ -269,11 +276,12 @@ or C<(0, $why_not)>.  A directory owned by another user, or one that group or
 others can write to, is refused: anybody who can create files there could
 impersonate the backend.
 
-=item Class::Shared::socket_path($class, $dir)
+=item Class::Shared::socket_path($dir)
 
-Returns the socket path for C<$class>, mangling the name and appending an
-FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
-result would be too long for a C<sockaddr_un>.
+Returns the path of the backend socket in C<$dir>, or in the default directory
+if none is given.  There is one socket for every class, because the class is
+chosen by the client rather than by the listener.  Dies if the result would be
+too long for a C<sockaddr_un>.
 
 =item Class::Shared::client_tls_options(%options)
 
@@ -367,7 +375,7 @@ another beyond this, so give each client, or each pair of them, their own.
 
 The listener is given three of the files:
 
-    class-shared serve --class Class::Simple --listen tcp:0.0.0.0:7000 \
+    class-shared serve --listen tcp:0.0.0.0:7000 \
         --token-file /etc/class-shared/token \
         --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
 
@@ -401,8 +409,8 @@ TLS, and has no unencrypted mode.
 
 =item *
 
-One backend per class, and it answers one call at a time, so a slow method
-delays every client of that class.
+One backend per directory answers one call at a time, so a slow method delays
+every client of that backend, whatever class they are using.
 
 =item *
 
@@ -430,6 +438,40 @@ state as arguments if it matters, or set the environment when you start the
 backend.
 
 =back
+
+=head1 PLATFORMS
+
+Unix-like systems only.  A backend needs three things this distribution cannot
+do without:
+
+=over 4
+
+=item *
+
+unix domain sockets, which is how a frontend reaches a backend on this machine
+and starts one when there is none;
+
+=item *
+
+POSIX directory permissions, which are the whole of a unix socket's
+authentication: the socket is mode 0600 inside a directory only its owner can
+write to, so the kernel decides who may connect;
+
+=item *
+
+a real C<fork>, which is how a frontend starts a backend in the background.
+
+=back
+
+MSWin32 has none of them -- its C<stat> reports the same mode bits for every
+directory, so no directory there can be shown to be owner-only -- and is not
+supported.  It does not fail as if the directory you passed were at fault:
+C<Class::Shared::ensure_dir> and C<Class::Shared::socket_path> die with that
+explanation whenever they are reached on Windows.
+
+The wire protocol, L<Class::Shared::Protocol>, is pure Perl and loads on any
+platform, so it can be used to talk to a backend from a machine that cannot run
+one.
 
 =head1 SEE ALSO
 

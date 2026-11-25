@@ -15,7 +15,6 @@ our $VERSION = $Class::Shared::VERSION;
 my $program = 'class-shared';
 
 my %opt = (
-	class      => undef,
 	dir        => undef,
 	socket     => undef,
 	listen     => undef,
@@ -33,7 +32,6 @@ my %opt = (
 );
 
 my $options_ok = GetOptions(
-	'class=s'      => \$opt{class},
 	'dir=s'        => \$opt{dir},
 	'socket=s'     => \$opt{socket},
 	'listen=s'     => \$opt{listen},
@@ -81,7 +79,6 @@ exit 0;
 # ---------------------------------------------------------------- commands
 
 sub serve {
-	my $class = require_class();
 	my ($host, $port) = tcp_endpoint();
 
 	eval { require Class::Shared::Backend; 1 }
@@ -89,8 +86,7 @@ sub serve {
 
 	my $backend = eval {
 		Class::Shared::Backend->new(
-			class     => $class,
-			socket    => defined $host ? undef : socket_path_for($class),
+			socket    => defined $host ? undef : socket_path_for(),
 			host      => $host,
 			port      => $port,
 			token     => token(),
@@ -119,63 +115,51 @@ sub serve {
 }
 
 sub status {
-	my $class = require_class();
-
-	my ($response, $error) = talk($class, { op => 'ping' });
+	my ($response, $error) = talk({ op => 'ping' });
 	fatal($error) unless $response;
 	fatal($response->{error} || 'the backend refused the request') unless $response->{ok};
 
-	printf "%s: pid %d, version %s, protocol %d, %d object(s), %d call(s), up %d second(s)\n",
-		$class,
+	printf "pid %d, version %s, protocol %d, %d object(s), %d call(s), up %d second(s)\n",
 		$response->{pid},
 		$response->{version},
 		$response->{proto},
 		$response->{objects},
 		$response->{calls},
 		$response->{uptime};
+
+	my $classes = $response->{classes};
+	$classes = [] unless ref($classes) eq 'ARRAY';
+
+	printf "classes: %s\n", (@{$classes} ? join(', ', @{$classes}) : 'none');
 	printf "address: %s\n", $response->{address};
 	printf "clients: %d\n", $response->{clients};
-	printf "log:     %s\n", log_path_for($class);
+	printf "log:     %s\n", log_path_for();
 
 	return;
 }
 
 sub stop {
-	my $class = require_class();
-
-	my ($response, $error) = talk($class, { op => 'shutdown' });
+	my ($response, $error) = talk({ op => 'shutdown' });
 	fatal($error) unless $response;
 	fatal($response->{error} || 'the backend refused to shut down') unless $response->{ok};
 
-	wait_for_exit($class);
+	wait_for_exit();
 
-	print "stopped $class\n";
+	print "stopped\n";
 
 	return;
 }
 
 sub show_path {
-	my $class = require_class();
-
 	fatal('path only makes sense for a unix socket; use --host/--port for TCP')
 		if defined $opt{listen} || defined $opt{host} || defined $opt{port};
 
-	print socket_path_for($class), "\n";
+	print socket_path_for(), "\n";
 
 	return;
 }
 
 # ---------------------------------------------------------------- plumbing
-
-sub require_class {
-	my $class = $opt{class};
-	fatal("no --class given") unless defined $class && length $class;
-
-	my $valid = eval { Class::Shared::validate_class($class); 1 };
-	fatal($@) unless $valid;
-
-	return $class;
-}
 
 # --listen tcp:HOST:PORT, or --host and --port; otherwise a unix socket.
 sub tcp_endpoint {
@@ -201,19 +185,15 @@ sub tcp_endpoint {
 }
 
 sub socket_path_for {
-	my ($class) = @_;
-
 	return $opt{socket} if defined $opt{socket} && length $opt{socket};
 
-	return Class::Shared::socket_path($class, $opt{dir});
+	return Class::Shared::socket_path($opt{dir});
 }
 
 sub log_path_for {
-	my ($class) = @_;
-
 	return $opt{log} if defined $opt{log} && length $opt{log};
 
-	return socket_path_for($class) . '.log';
+	return socket_path_for() . '.log';
 }
 
 sub token {
@@ -278,7 +258,7 @@ sub tls_options {
 }
 
 sub talk {
-	my ($class, $request) = @_;
+	my ($request) = @_;
 
 	my ($host, $port) = tcp_endpoint();
 	my $secret = token();
@@ -306,20 +286,19 @@ sub talk {
 		if (!$sock) {
 			my $why = IO::Socket::SSL::errstr();
 			$why = "$!" unless defined $why && length $why;
-			return (undef, "no backend for $class at $where: TLS failed: $why");
+						return (undef, "no backend at $where: TLS failed: $why");
 		}
 	} else {
-		$where = socket_path_for($class);
+		$where = socket_path_for();
 		$sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $where);
-		return (undef, "no backend for $class at $where: $!") unless $sock;
+		return (undef, "no backend at $where: $!") unless $sock;
 	}
 
 	my ($hello, $hello_error) = exchange($sock, {
 		op    => 'hello',
 		proto => $Class::Shared::PROTOCOL_VERSION,
-		class => $class,
 		pid   => $$,
-		}, $secret);
+	}, $secret);
 
 	if (!$hello) {
 		close $sock;
@@ -380,19 +359,17 @@ sub exchange {
 }
 
 sub wait_for_exit {
-	my ($class) = @_;
-
 	my ($host) = tcp_endpoint();
 	return if defined $host;
 
-	my $socket = socket_path_for($class);
+	my $socket = socket_path_for();
 	my $deadline = time + 5;
 
 	while (-e $socket && time < $deadline) {
 		select(undef, undef, undef, 0.02);
 	}
 
-	fatal("$class asked to shut down but $socket is still there") if -e $socket;
+	fatal("the backend asked to shut down but $socket is still there") if -e $socket;
 
 	return;
 }
@@ -412,13 +389,12 @@ sub usage {
 usage: $program <command> [options]
 
 Commands:
-  serve     run the backend for --class (in the background unless -f)
+  serve     run the backend (in the background unless -f)
   status    ask a running backend what it is doing
   stop      ask a running backend to shut down, destroying its objects
-  path      print the unix socket path used for --class
+  path      print the unix socket path
 
 Options:
-  --class NAME     the class to serve, e.g. Class::Simple
   --dir DIR        directory for the socket, lock and log (default:
                    \$CLASS_SHARED_DIR, then \$XDG_RUNTIME_DIR/class-shared, then
                    /run/user/\$uid/class-shared, then the system temp directory)
@@ -439,9 +415,9 @@ Options:
   -V, --version    print the version
 
 Examples:
-  $program serve  --class Class::Simple -f
-  $program status --class Class::Simple
-  $program serve  --class Class::Simple --listen tcp:0.0.0.0:7000 \\
+  $program serve  -f
+  $program status
+  $program serve  --listen tcp:0.0.0.0:7000 \\
                   --token-file /etc/class-shared/token \\
                   --tls-cert /etc/class-shared/server.pem \\
                   --tls-key /etc/class-shared/server-key.pem \\
@@ -459,20 +435,24 @@ class-shared - start, inspect and stop a Class::Shared backend
 
 =head1 SYNOPSIS
 
-    class-shared serve  --class Class::Simple [-f] [--dir DIR | --socket PATH]
-    class-shared serve  --class Class::Simple --listen tcp:HOST:PORT \
+    class-shared serve  [-f] [--dir DIR | --socket PATH]
+    class-shared serve  --listen tcp:HOST:PORT \
                         --token-file FILE --tls-cert CERT --tls-key KEY \
                         --tls-ca CA
-    class-shared status --class Class::Simple [--dir DIR | --socket PATH]
-    class-shared stop   --class Class::Simple
-    class-shared path   --class Class::Simple [--dir DIR | --socket PATH]
+    class-shared status [--dir DIR | --socket PATH]
+    class-shared stop   [--dir DIR | --socket PATH]
+    class-shared path   [--dir DIR | --socket PATH]
     class-shared help
 
 =head1 DESCRIPTION
 
 C<class-shared> is the command line face of L<Class::Shared>: it starts the
-singleton L<Class::Shared::Backend> that loads one class and holds an object
-per client, asks a running backend what it is doing, and asks it to stop.
+singleton L<Class::Shared::Backend>, asks a running backend what it is doing,
+and asks it to stop.
+
+The backend it starts has no class of its own: a client names the class it wants
+in the handshake and the backend loads that module then, so one backend serves
+whatever its clients ask for.
 
 A L<Class::Shared::Frontend> starts a backend of its own over a unix socket and
 never needs this program.  Reach for it when the backend should be started by
@@ -485,7 +465,7 @@ frontend will start for you.
 
 =item serve
 
-Starts the backend for C<--class> and does not return until it stops.  Unless
+Starts the backend and does not return until it stops.  Unless
 C<--foreground> is given it forks into the background first, so the command
 returns once the backend is running.  Whatever the backend has to say goes to
 its log file, C<--log> or the socket path with C<.log> appended, in the
@@ -499,22 +479,22 @@ start without any of them.  A unix socket takes none of them, because its mode
 
 =item status
 
-Pings the backend and prints what it reports: the class, pid, version,
-protocol, number of objects, number of calls, uptime, the address it is
-listening on, the number of clients and the log path.  Prints nothing and exits
-non-zero if no backend answers.
+Pings the backend and prints what it reports: the pid, version, protocol,
+number of objects, number of calls, uptime, the classes it has loaded, the
+address it is listening on, the number of clients and the log path.  Prints
+nothing and exits non-zero if no backend answers.
 
 =item stop
 
 Asks the backend to shut down, which destroys its objects and runs their
 C<DESTROY> methods in the backend.  Over a unix socket it waits for the socket
 to disappear afterwards; over TCP there is nothing to wait for.  Prints
-C<stopped CLASS>.
+C<stopped>.
 
 =item path
 
-Prints the unix socket path that C<--class> would use, after C<--dir> and
-C<--socket>.  Refuses the TCP options, which have no socket path.
+Prints the unix socket path that a backend here would listen on, after
+C<--dir> and C<--socket>.  Refuses the TCP options, which have no socket path.
 
 =item help
 
@@ -525,11 +505,6 @@ Prints a short usage message and exits successfully.  C<--help> does the same.
 =head1 OPTIONS
 
 =over 4
-
-=item --class NAME
-
-The class the backend serves, for example C<Class::Simple>.  Required by every
-command; the backend loads it once and will not instantiate anything else.
 
 =item --dir DIR
 

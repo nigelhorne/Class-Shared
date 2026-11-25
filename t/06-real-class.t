@@ -2,6 +2,15 @@ use strict;
 use warnings;
 
 use Test::More;
+
+# The frontend reaches its backend over a unix socket in an owner-only
+# directory, which Win32 does not have.
+BEGIN {
+	plan skip_all => 'a backend here is reached over a unix socket in an '
+		. "owner-only directory, which MSWin32 does not have"
+		if $^O eq 'MSWin32';
+}
+
 use File::Temp qw(tempdir);
 use lib 't/lib';
 
@@ -49,7 +58,23 @@ is($english->conjunction('Jack', 'Jill', 'Spot'), 'Jack, Jill, and Spot',
 	'and the first object is unaffected');
 is($spanish->shared_pid, $english->shared_pid, 'both objects live in the one backend');
 
-my $status = `$^X -Ilib -It/lib bin/class-shared status --class Shared::Conjunction --dir $dir 2>&1`;
-like($status, qr/2 object\(s\)/, 'the backend counts both objects') or diag $status;
+# The backend is not tied to one class: a frontend naming another one loads
+# that module into the same process and gets its own objects from it.
+my $counter = Class::Shared::Frontend->new(
+	'Shared::Counter',
+	ctor => [start => 7],
+	dir  => $dir,
+);
+
+is($counter->shared_pid, $english->shared_pid,
+	'a second class is served by the same backend');
+is($counter->value, 7, 'with an object of its own');
+is($english->conjunction('Jack', 'Jill'), 'Jack and Jill',
+	'and the first class is unaffected');
+
+my $status = `$^X -Ilib -It/lib bin/class-shared status --dir $dir 2>&1`;
+like($status, qr/3 object\(s\)/, 'the backend counts all three objects') or diag $status;
+like($status, qr/^classes: Shared::Conjunction, Shared::Counter$/m,
+	'and lists both classes') or diag $status;
 
 done_testing();

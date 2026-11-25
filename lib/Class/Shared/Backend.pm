@@ -30,16 +30,11 @@ our $HANDSHAKE_TIMEOUT = 5;
 # refused for being large.
 our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
 
-# The backend loads one class, once, and holds many objects made from it: one
-# per frontend.  Clients talk to it over a unix socket or TCP.
+# The backend loads each class a client names, once, and holds many objects
+# made from them: one per frontend.  Clients talk to it over a unix socket or
+# TCP.
 sub new {
 	my ($class, %opt) = @_;
-
-	my $target = $opt{class};
-	die "Class::Shared::Backend->new: no class => given\n"
-		unless defined $target && length $target;
-
-	Class::Shared::validate_class($target);
 
 	my ($host, $port, $socket) = @opt{qw(host port socket)};
 
@@ -65,7 +60,7 @@ sub new {
 			. "to anyone who can route to it\n"
 			if grep { !defined $opt{$_} || !length $opt{$_} } qw(tls_cert tls_key tls_ca);
 	} else {
-		$socket = Class::Shared::socket_path($target, $opt{dir})
+		$socket = Class::Shared::socket_path($opt{dir})
 			unless defined $socket;
 
 		# The socket is mode 0600 in a directory only its owner can write to,
@@ -82,10 +77,10 @@ sub new {
 
 	my $control = defined $socket
 		? $socket
-		: Class::Shared::socket_path($target, $opt{dir});
+		: Class::Shared::socket_path($opt{dir});
 
 	my $self = bless {
-		class         => $target,
+		classes       => {},
 		socket        => $socket,
 		host          => $host,
 		port          => $port,
@@ -125,13 +120,6 @@ sub new {
 sub run {
 	my $self = shift;
 
-	my $loaded = eval { $self->_load_class; 1 };
-	if (!$loaded) {
-		my $error = $@ || 'unknown error';
-		$self->_log("fatal: $error");
-		die $error;
-	}
-
 	$self->_daemonize if $self->{daemonize};
 
 	my $started = eval { $self->_setup; 1 };
@@ -142,7 +130,7 @@ sub run {
 		exit 1;
 	}
 
-	$self->_log("serving $self->{class} on $self->{address} (pid $$"
+	$self->_log("serving on $self->{address} (pid $$"
 		. ($self->{token} ? ', token required' : '')
 		. (defined $self->{host} ? ', TLS with client certificates' : '') . ')');
 
@@ -161,17 +149,30 @@ sub DESTROY {
 	unlink $self->{socket} if $self->{socket} && -e $self->{socket};
 }
 
+# The class is the client's choice, so it is loaded when a client asks for it
+# rather than at startup: require brings the file in, and import is called
+# because a module with exports is normally used with use, not require.  Each
+# class is loaded once however many clients want it.
 sub _load_class {
-	my $self = shift;
+	my ($self, $class) = @_;
 
-	my $file = $self->{class};
+	return 1 if $self->{classes}{$class};
+
+	my $file = $class;
 	$file =~ s{::}{/}g;
 	$file .= '.pm';
 
 	eval { require $file; 1 }
-		or die "cannot load $self->{class}: " . ($@ || 'unknown error');
+		or return (0, "cannot load $class: " . ($@ || 'unknown error'));
 
-	return 1;
+	if ($class->can('import')) {
+		eval { $class->import; 1 }
+			or return (0, "cannot import $class: " . ($@ || 'unknown error'));
+	}
+
+	$self->{classes}{$class} = 1;
+
+	return (1);
 }
 
 sub _setup {
@@ -195,7 +196,7 @@ sub _setup {
 	while (1) {
 		last if flock($lock, LOCK_EX | LOCK_NB);
 		if (time >= $deadline) {
-			die "another backend is already serving $self->{class} ($lock_path is locked)\n";
+			die "another backend is already serving ($lock_path is locked)\n";
 		}
 		select(undef, undef, undef, 0.02);
 	}
@@ -404,8 +405,8 @@ sub _accept {
 
 	fcntl($fh, F_SETFD, FD_CLOEXEC);
 
-	# A unix client that stops reading must not hold the loop either, so its
-	# socket is non-blocking from here on, as a TLS one is from _start_tls.
+	# A unix client that stops reading must not hold the loop either, so every
+	# accepted socket is non-blocking from here on, TLS or not.
 	$fh->blocking(0);
 
 	my $client = {
@@ -445,8 +446,7 @@ sub _accept {
 sub _start_tls {
 	my ($self, $fh) = @_;
 
-	$fh->blocking(0);
-
+	# _accept has already made it non-blocking; start_SSL keeps that.
 	return IO::Socket::SSL->start_SSL(
 		$fh,
 		SSL_server         => 1,
@@ -616,6 +616,8 @@ sub _drop_client {
 sub _send {
 	my ($self, $client, $message) = @_;
 
+	return if $client->{closed};
+
 	my ($bytes, $encode_error) = Class::Shared::Protocol::encode_frame($message, $self->{token});
 
 	if (!defined $bytes) {
@@ -625,9 +627,14 @@ sub _send {
 			kind  => 'protocol',
 			error => $error,
 		}, $self->{token});
-	}
 
-	return unless defined $bytes;
+		# Neither the reply nor the frame saying it could not be sent can be
+		# encoded, so this client will never hear anything: say so here.
+		if (!defined $bytes) {
+			$self->_log("cannot encode a reply: " . ($encode_error || 'unknown error'));
+			return;
+		}
+	}
 
 	# Measure the queue before any of this reply goes out, so the limit is on
 	# what the backend is holding for this client and not on how much of it
@@ -642,7 +649,9 @@ sub _send {
 
 	$client->{outbuf} .= $bytes;
 
-	return $self->_flush($client);
+	$self->_flush($client);
+
+	return;
 }
 
 # Write as much of a client's queue as the socket will take right now.  What is
@@ -651,7 +660,7 @@ sub _send {
 sub _flush {
 	my ($self, $client) = @_;
 
-	return 1 if $client->{closed} || !length $client->{outbuf};
+	return if $client->{closed} || !length $client->{outbuf};
 
 	# errno outlives a call, and a TLS write can fail without touching it.
 	$! = 0;
@@ -659,11 +668,13 @@ sub _flush {
 	my $written = syswrite($client->{fh}, $client->{outbuf});
 
 	if (!defined $written) {
-		return 1 if $self->_would_block($client->{fh}, 'write');
+		return if $self->_would_block($client->{fh}, 'write');
 		$self->_drop_client($client, 'write error: ' . ($! || 'unknown error'));
 		return;
 	}
 
+	# A socket that takes nothing and reports no error would keep the fd in the
+	# writable set for ever, spinning the loop on a queue that never shrinks.
 	if ($written == 0) {
 		$self->_drop_client($client, 'write error: peer closed the connection');
 		return;
@@ -672,7 +683,7 @@ sub _flush {
 	substr($client->{outbuf}, 0, $written, '');
 
 	# Anything still queued puts the fd back in the loop's writable set.
-	return 1;
+	return;
 }
 
 # ------------------------------------------------------------- request ops
@@ -716,21 +727,32 @@ sub _op_hello {
 		};
 	}
 
-	my $wanted = defined $message->{class} ? $message->{class} : '';
+	# A client may name the class it wants here, and then this connection is
+	# for objects of that class.  A client that names none is welcome too: that
+	# is how the admin commands ask a backend how it is without asking for
+	# anything to be loaded.
+	my $wanted = $message->{class};
 
-	if ($wanted ne $self->{class}) {
-		return {
-			ok    => 0,
-			kind  => 'protocol',
-			error => "this backend serves $self->{class}, not '$wanted'",
-		};
+	if (defined $wanted && length $wanted) {
+		my $valid = eval { Class::Shared::validate_class($wanted); 1 };
+		if (!$valid) {
+			my $error = $@ || 'bad class name';
+			$error =~ s/\s+\z//;
+			return { ok => 0, kind => 'protocol', error => $error };
+		}
+
+		my ($loaded, $load_error) = $self->_load_class($wanted);
+		return { ok => 0, kind => 'unknown_class', error => $load_error }
+			unless $loaded;
+
+		$client->{class} = $wanted;
 	}
 
 	$client->{greeted} = 1;
 
 	return {
 		ok      => 1,
-		class   => $self->{class},
+		class   => $client->{class},
 		pid     => $$,
 		proto   => $Class::Shared::PROTOCOL_VERSION,
 		version => $Class::Shared::VERSION,
@@ -739,6 +761,13 @@ sub _op_hello {
 
 sub _op_new {
 	my ($self, $client, $message) = @_;
+
+	my $class = $client->{class};
+	return {
+		ok    => 0,
+		kind  => 'protocol',
+		error => 'this connection named no class in its handshake',
+	} unless defined $class;
 
 	my $args = $message->{args};
 	$args = [] unless defined $args;
@@ -755,7 +784,7 @@ sub _op_new {
 		};
 	}
 
-	my $object = eval { $self->{class}->new(@{$args}) };
+	my $object = eval { $class->new(@{$args}) };
 	if ($@) {
 		return { ok => 0, kind => 'die', error => "$@" };
 	}
@@ -763,7 +792,7 @@ sub _op_new {
 	return {
 		ok    => 0,
 		kind  => 'protocol',
-		error => "$self->{class}->new did not return an object",
+		error => "$class->new did not return an object",
 	} unless ref($object);
 
 	my $id = $self->{next_id}++;
@@ -775,11 +804,18 @@ sub _op_new {
 	$client->{objects}{$id} = 1;
 	$self->{constructed}++;
 
-	return { ok => 1, id => $id, class => $self->{class} };
+	return { ok => 1, id => $id, class => $class };
 }
 
 sub _op_call {
 	my ($self, $client, $message) = @_;
+
+	my $class = $client->{class};
+	return {
+		ok    => 0,
+		kind  => 'protocol',
+		error => 'this connection named no class in its handshake',
+	} unless defined $class;
 
 	my $id = $message->{id};
 	return { ok => 0, kind => 'protocol', error => 'call: no object id' }
@@ -831,11 +867,11 @@ sub _op_call {
 		return { ok => 1, result => [$answer] };
 	}
 
-	if (!$self->{class}->can($method) && !$self->{class}->can('AUTOLOAD')) {
+	if (!$class->can($method) && !$class->can('AUTOLOAD')) {
 		return {
 			ok    => 0,
 			kind  => 'unknown_method',
-			error => "$self->{class} has no method '$method'",
+			error => "$class has no method '$method'",
 		};
 	}
 
@@ -867,7 +903,7 @@ sub _op_ping {
 
 	return {
 		ok          => 1,
-		class       => $self->{class},
+		classes     => [sort keys %{$self->{classes}}],
 		pid         => $$,
 		proto       => $Class::Shared::PROTOCOL_VERSION,
 		version     => $Class::Shared::VERSION,
@@ -999,13 +1035,11 @@ Class::Shared::Backend - load a class once and serve objects made from it
     use Class::Shared::Backend;
 
     Class::Shared::Backend->new(
-        class  => 'Class::Simple',
-        socket => '/run/user/1000/class-shared/Class-Simple-1a2b3c4d.sock',
+        socket => '/run/user/1000/class-shared/class-shared.sock',
     )->run;
 
     # On another machine:
     Class::Shared::Backend->new(
-        class    => 'Class::Simple',
         host     => '0.0.0.0',
         port     => 7000,
         tls_cert => '/etc/class-shared/server.pem',
@@ -1016,24 +1050,24 @@ Class::Shared::Backend - load a class once and serve objects made from it
 
 =head1 DESCRIPTION
 
-The backend holds the one copy of the class.  It loads the module once and then
-constructs as many objects from it as its clients ask for, keeping each object
+A client names the class it wants in its first message, the handshake, and the
+backend loads that module then -- C<require> for the file, C<import> for its
+exports -- once per class however many clients ask for it.  Each object lives
 until the connection that asked for it goes away.
 
-    one backend  --  one copy of Class::Simple's code
+    one backend  --  Class::Simple (code, loaded when first asked for)
+                 |--  Class::Other  (code, loaded when first asked for)
                  `--  object #1 (client A), object #2 (client B), ...
 
 It answers one request at a time in a select loop, because all the objects share
 one interpreter.
 
+There is no class option: which classes are loaded is decided by the clients,
+not by the command line.
+
 =head1 OPTIONS
 
 =over 4
-
-=item class
-
-Required.  The class to serve.  The backend loads it, and will not instantiate
-or dispatch to anything else, however the client asks.
 
 =item socket
 
@@ -1096,7 +1130,10 @@ How many bytes may be waiting to be written to one client before it is dropped.
 Default one maximum-size frame (64 MiB) plus a little, so no reply the protocol
 allows is refused for being large.  Lower it to cap what a client that asks and
 does not read can hold; a reply larger than the setting is then dropped rather
-than queued.
+than queued.  The bound is per client, so all of them together may hold
+C<max_clients> times this: with both defaults that is more than any machine has,
+and a listener that hands out large replies to clients it does not trust should
+lower one or the other.
 
 =item start_timeout
 
@@ -1113,15 +1150,15 @@ has finished its handshake may sit idle for as long as it likes.
 
 =head1 SINGLETON
 
-Two guards keep it to one backend per class:
+Two guards keep it to one backend per directory:
 
 =over 4
 
 =item *
 
 An exclusive C<flock> on a control file in the socket directory, held for the
-life of the process.  A second backend for the same class exits with an
-explanation, whatever transport it was asked to use.
+life of the process.  A second backend there exits with an explanation,
+whatever transport it was asked to use.
 
 =item *
 
@@ -1180,6 +1217,13 @@ exits.
 A unix socket is created mode 0600 in a directory only the owner can write to.
 That is the whole of its authentication, so it takes neither a token nor TLS,
 and its frames carry no digest.
+
+The class is the client's choice.  The handshake loads whatever module is named,
+so anybody who can connect can make the backend C<require> any module it can
+find, running that module's load-time code.  That is the same power they would
+have running perl themselves as the backend's user, which is what a unix
+socket's owner-only permissions and a TCP listener's certificate and token are
+there to confine: keep them to people you would let run code here.
 
 A TCP listener is a TLS endpoint with client certificates: it needs
 C<tls_cert>/C<tls_key> to prove which backend it is, and C<tls_ca> to decide

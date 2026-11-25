@@ -2,6 +2,16 @@ use strict;
 use warnings;
 
 use Test::More;
+
+# A backend is reached over a unix socket in a directory only its owner can
+# write to.  Win32 has neither, so there is nothing here to test; skipping says
+# so in the test output rather than failing for lack of a platform.
+BEGIN {
+	plan skip_all => 'Class::Shared serves over a unix socket in an owner-only '
+		. "directory, which MSWin32 does not have"
+		if $^O eq 'MSWin32';
+}
+
 use File::Temp qw(tempdir);
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
@@ -97,7 +107,8 @@ my $code = $first->can('inc');
 is($first->$code, 16, 'the code reference can() returned really calls the object');
 ok($first->isa('Shared::Counter'), 'isa() answers through the proxy');
 
-# Only the class the backend serves may be reached through it.
+# A class that cannot be loaded is refused at the handshake, and the refusal
+# says which module was missing, so a frontend with a typo learns what it was.
 {
 	my $socket = IO::Socket::UNIX->new(
 		Type => SOCK_STREAM,
@@ -112,8 +123,9 @@ ok($first->isa('Shared::Counter'), 'isa() answers through the proxy');
 	});
 	Class::Shared::Protocol::write_all($socket, $bytes);
 	my ($response) = Class::Shared::Protocol::read_frame($socket);
-	ok(!$response->{ok}, 'a request for another class is refused');
-	like($response->{error}, qr/serves Shared::Counter/, 'and says which class it does serve');
+	ok(!$response->{ok}, 'a request for a class that does not exist is refused');
+	like($response->{error}, qr/cannot load Shared::SomethingElse/,
+		'and names the module it could not load');
 	close $socket;
 }
 
@@ -168,7 +180,7 @@ ok($first->isa('Shared::Counter'), 'isa() answers through the proxy');
 # Status.
 my $status = $first->shared_status;
 ok($status->{ok}, 'ping answers');
-is($status->{class}, 'Shared::Counter', 'status names the class');
+is_deeply($status->{classes}, ['Shared::Counter'], 'status names the classes it has loaded');
 is($status->{objects}, 2, 'status counts the objects the backend holds');
 is($status->{constructed}, 2, 'and how many were built');
 ok($status->{calls} > 0, 'status counts calls');
@@ -218,7 +230,7 @@ ok($third->shared_shutdown, 'the second backend shuts down too');
 eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, token => 's3cret'); 1 };
 like($@, qr/a unix socket needs no token/, 'the frontend refuses a token on a unix socket');
 
-eval { Class::Shared::Backend->new(class => 'Shared::Counter', dir => $dir, token => 's3cret'); 1 };
+eval { Class::Shared::Backend->new(dir => $dir, token => 's3cret'); 1 };
 like($@, qr/a unix socket needs no token/, 'and so does the backend');
 
 # TLS is for TCP for the same reason: the kernel has already decided who may
@@ -226,7 +238,7 @@ like($@, qr/a unix socket needs no token/, 'and so does the backend');
 eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, tls_ca => 'ca.pem'); 1 };
 like($@, qr/a unix socket needs no TLS/, 'the frontend refuses TLS on a unix socket');
 
-eval { Class::Shared::Backend->new(class => 'Shared::Counter', dir => $dir, tls_cert => 'cert.pem'); 1 };
+eval { Class::Shared::Backend->new(dir => $dir, tls_cert => 'cert.pem'); 1 };
 like($@, qr/a unix socket needs no TLS/, 'and so does the backend');
 
 eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, tls_fingerprint => ('ab' x 32)); 1 };

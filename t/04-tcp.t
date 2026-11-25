@@ -9,6 +9,15 @@ use Time::HiRes ();
 use POSIX ();
 use lib 't/lib';
 
+# The backends here are started with fork() and exec(), which Win32 cannot use
+# to run a listener, and their directories must be owner-only, which its
+# permission bits never say.
+BEGIN {
+	plan skip_all => 'these backends are started with fork() in an owner-only '
+		. "directory, neither of which MSWin32 offers"
+		if $^O eq 'MSWin32';
+}
+
 BEGIN {
 	eval { require IO::Socket::SSL; 1 }
 		or plan skip_all => 'IO::Socket::SSL is required for the TCP tests';
@@ -59,7 +68,7 @@ print {$token_fh} "s3cret-token\n";
 close $token_fh;
 
 my $tls = "--tls-cert $pem{server} --tls-key $pem{'server-key'} --tls-ca $pem{ca}";
-my $base = "$^X -Ilib -It/lib bin/class-shared serve --class Shared::Counter "
+my $base = "$^X -Ilib -It/lib bin/class-shared serve "
 	. "--listen tcp:127.0.0.1:$port --dir $dir -f";
 
 # A port anybody can route to must not be a port where a stranger's bytes reach
@@ -108,7 +117,6 @@ if ($pid == 0) {
 	no warnings 'exec';    # exec() does not return when it works
 	exec(
 		$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
-		'--class', 'Shared::Counter',
 		'--listen', "tcp:127.0.0.1:$port",
 		'--token-file', $token_file,
 		'--tls-cert', $pem{server},
@@ -404,9 +412,11 @@ $during->shared_close if $during;
 
 close $_ for @silent;
 
-# A connection that has handshaken and then stops halfway through a frame is
-# not something to wait for: the first half waits in that client's own buffer
-# while everybody else is served, and the second half must still complete it.
+# A frame that arrives in two pieces is kept in that client's buffer until the
+# second piece lands, and then understood.  This covers the incremental parser,
+# not the non-blocking read: a whole TLS record arrives here either way, so a
+# blocking read would return the first piece and wait only for the next one.
+# The half-record test below is the one that covers reads that must not wait.
 my $dribbler = IO::Socket::SSL->new(
 	PeerAddr        => '127.0.0.1',
 	PeerPort        => $port,
@@ -546,11 +556,11 @@ if (!$short_pid) {
 	exec(
 		$^X, '-Ilib', '-It/lib', '-MClass::Shared::Backend', '-e',
 		'Class::Shared::Backend->new(' . join(', ',
-			'class => shift', 'host => shift', 'port => shift',
+			'host => shift', 'port => shift',
 			'token => shift', 'tls_cert => shift', 'tls_key => shift',
 			'tls_ca => shift', 'dir => shift', 'log => shift',
 			'handshake_timeout => shift') . ')->run()',
-		'Shared::Counter', '127.0.0.1', $deadline_port, 's3cret-token',
+		'127.0.0.1', $deadline_port, 's3cret-token',
 		$pem{server}, $pem{'server-key'}, $pem{ca},
 		$deadline_dir, File::Spec->catfile($deadline_dir, 'log'), 1,
 	);
@@ -615,7 +625,8 @@ if ($real) {
 # A client that asks for an answer and then never reads it must not hold the
 # loop: replies are queued per connection and written as the socket takes them.
 # The queue is bounded too, so such a client is dropped rather than allowed to
-# sit on the backend's memory.  A small bound makes both visible cheaply.
+# sit on the backend's memory.  Two ways of passing the bound are covered: one
+# reply larger than it, and moderate replies that add up to more than it.
 my $queue_probe = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1',
 	LocalPort => 0,
@@ -637,13 +648,13 @@ if (!$queue_pid) {
 	exec(
 		$^X, '-Ilib', '-It/lib', '-MClass::Shared::Backend', '-e',
 		'Class::Shared::Backend->new(' . join(', ',
-			'class => shift', 'host => shift', 'port => shift',
+			'host => shift', 'port => shift',
 			'token => shift', 'tls_cert => shift', 'tls_key => shift',
 			'tls_ca => shift', 'dir => shift', 'log => shift',
 			'max_queued => shift') . ')->run()',
-		'Shared::Counter', '127.0.0.1', $queue_port, 's3cret-token',
+		'127.0.0.1', $queue_port, 's3cret-token',
 		$pem{server}, $pem{'server-key'}, $pem{ca},
-		$queue_dir, File::Spec->catfile($queue_dir, 'log'), 64 * 1024,
+		$queue_dir, File::Spec->catfile($queue_dir, 'log'), 8 * 1024 * 1024,
 	);
 	POSIX::_exit(127);
 }
@@ -662,48 +673,70 @@ for (1 .. 100) {
 ok($queue_ready, 'a backend with a small reply queue came up') or diag $@;
 $queue_ready->shared_close if $queue_ready;
 
-# Raw frames, so this client can ask for an answer and then simply not read it.
-my $hog = IO::Socket::SSL->new(
-	PeerAddr        => '127.0.0.1',
-	PeerPort        => $queue_port,
-	Proto           => 'tcp',
-	Timeout         => 5,
-	SSL_ca_file     => $pem{ca},
-	SSL_cert_file   => $pem{client},
-	SSL_key_file    => $pem{'client-key'},
-	SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
-) or BAIL_OUT('cannot open a TLS connection for the client that will not read');
+# A raw client, so the test can ask for an answer and then simply not read it.
+sub tls_client_with_object {
+	my ($port) = @_;
 
-my ($hog_hello) = Class::Shared::Protocol::encode_frame({
-	op    => 'hello',
-	proto => $Class::Shared::PROTOCOL_VERSION,
-	class => 'Shared::Counter',
-}, 's3cret-token');
-Class::Shared::Protocol::write_all($hog, $hog_hello);
-my ($hog_greeting) = Class::Shared::Protocol::read_frame($hog, 5, 's3cret-token');
-ok($hog_greeting, 'the client that will not read is greeted');
+	my $sock = IO::Socket::SSL->new(
+		PeerAddr        => '127.0.0.1',
+		PeerPort        => $port,
+		Proto           => 'tcp',
+		Timeout         => 5,
+		SSL_ca_file     => $pem{ca},
+		SSL_cert_file   => $pem{client},
+		SSL_key_file    => $pem{'client-key'},
+		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+	) or BAIL_OUT("cannot open a TLS connection to the queue backend: $!");
 
-my ($hog_new) = Class::Shared::Protocol::encode_frame({ op => 'new', args => [] },
-	's3cret-token');
-Class::Shared::Protocol::write_all($hog, $hog_new);
-my ($hog_object) = Class::Shared::Protocol::read_frame($hog, 5, 's3cret-token');
-ok($hog_object && $hog_object->{ok}, 'and given an object to ask');
+	for my $request (
+		{ op => 'hello', proto => $Class::Shared::PROTOCOL_VERSION,
+			class => 'Shared::Counter' },
+		{ op => 'new', args => [] },
+	) {
+		my ($bytes) = Class::Shared::Protocol::encode_frame($request, 's3cret-token');
+		BAIL_OUT('cannot encode a request for the queue backend') unless defined $bytes;
+		Class::Shared::Protocol::write_all($sock, $bytes);
 
-# 16 MiB back against a 64 KiB queue: more than any socket buffer, so a writer
+		my ($response) = Class::Shared::Protocol::read_frame($sock, 5, 's3cret-token');
+		BAIL_OUT('the queue backend refused the client') unless $response && $response->{ok};
+
+		return ($sock, $response->{id}) if $request->{op} eq 'new';
+	}
+}
+
+# Reads until the backend closes the connection: a reply it would not queue
+# means the client is finished, so what is left is a closed stream.
+sub drain_until_closed {
+	my ($sock) = @_;
+
+	my $give_up = Time::HiRes::time() + 5;
+	while (Time::HiRes::time() < $give_up) {
+		my $rin = '';
+		vec($rin, fileno($sock), 1) = 1;
+		return 0 unless select(my $rout = $rin, undef, undef, 0.2);
+
+		my $got = sysread($sock, my $data, 65536);
+		return 1 if !defined $got || $got == 0;
+	}
+
+	return 0;
+}
+
+my ($hog, $hog_id) = tls_client_with_object($queue_port);
+ok($hog, 'a client that will not read has a connection and an object');
+
+# 16 MiB back against an 8 MiB queue: more than any socket buffer, so a writer
 # that waited for the socket would sit there, and more than this client may
 # hold unwritten, so the backend has to give up on it instead.
-if ($hog_object && $hog_object->{ok}) {
-	my ($hog_call) = Class::Shared::Protocol::encode_frame({
-		op     => 'call',
-		id     => $hog_object->{id},
-		method => 'blob',
-		args   => [16 * 1024 * 1024],
-		want   => 'scalar',
-	}, 's3cret-token');
-	Class::Shared::Protocol::write_all($hog, $hog_call) if defined $hog_call;
-} else {
-	BAIL_OUT('the client that will not read has no object to ask');
-}
+my ($hog_call) = Class::Shared::Protocol::encode_frame({
+	op     => 'call',
+	id     => $hog_id,
+	method => 'blob',
+	args   => [16 * 1024 * 1024],
+	want   => 'scalar',
+}, 's3cret-token');
+BAIL_OUT('cannot encode the 16 MiB request') unless defined $hog_call;
+Class::Shared::Protocol::write_all($hog, $hog_call);
 
 my $queue_started = Time::HiRes::time();
 my $waiting = eval { frontend(port => $queue_port, ctor => [start => 29]) };
@@ -717,18 +750,36 @@ $waiting->shared_close if $waiting;
 
 # The reply could not be queued, so that connection is finished: what is left
 # to read is a closed stream, not a megabyte of answer.
-my $gone = 0;
-my $queue_give_up = Time::HiRes::time() + 5;
-while (!$gone && Time::HiRes::time() < $queue_give_up) {
-	my $rin = '';
-	vec($rin, fileno($hog), 1) = 1;
-	last unless select(my $rout = $rin, undef, undef, 0.2);
-
-	my $got = sysread($hog, my $data, 65536);
-	$gone = 1 if !defined $got || $got == 0;
-}
-ok($gone, 'and a client that will not read is dropped when its queue passes the bound');
+ok(drain_until_closed($hog),
+	'and a client that will not read is dropped when its queue passes the bound');
 close $hog;
+
+# The bound is not only about one oversized reply: a client that asks for
+# moderate answers, each of which fits, is dropped once enough of them are
+# waiting.  Twelve replies of 2 MiB are 24 MiB against an 8 MiB bound, and this
+# client reads none of it.
+my ($piler, $piler_id) = tls_client_with_object($queue_port);
+ok($piler, 'a second client that will not read has a connection and an object');
+
+for (1 .. 12) {
+	my ($call) = Class::Shared::Protocol::encode_frame({
+		op     => 'call',
+		id     => $piler_id,
+		method => 'blob',
+		args   => [2 * 1024 * 1024],
+		want   => 'scalar',
+	}, 's3cret-token');
+	last unless defined $call;
+
+	# The backend may drop this client part way through, so a failed write is
+	# the test's cue to stop asking, not a failure of its own.
+	my ($written) = Class::Shared::Protocol::write_all($piler, $call);
+	last unless $written;
+}
+
+ok(drain_until_closed($piler),
+	'and is dropped when replies that each fit add up past the bound');
+close $piler;
 
 # Nothing can be autostarted over TCP: a closed port is an error.
 my $closed = IO::Socket::INET->new(

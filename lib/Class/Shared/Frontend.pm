@@ -103,7 +103,7 @@ sub new {
 	}
 
 	my $socket_path = $transport eq 'unix'
-		? ($opt{socket} || Class::Shared::socket_path($target, $opt{dir}))
+		? ($opt{socket} || Class::Shared::socket_path($opt{dir}))
 		: undef;
 
 	my $self = bless {
@@ -122,7 +122,7 @@ sub new {
 		ctor        => $opt{ctor} || [],
 		autostart   => exists $opt{autostart} ? $opt{autostart} : 1,
 		timeout     => defined $opt{timeout} ? $opt{timeout} : $DEFAULT_TIMEOUT,
-		log         => $opt{log} || (($socket_path || Class::Shared::socket_path($target, $opt{dir})) . '.log'),
+		log         => $opt{log} || (($socket_path || Class::Shared::socket_path($opt{dir})) . '.log'),
 		sock        => undef,
 		pid         => undef,
 		id          => undef,
@@ -344,13 +344,13 @@ sub _connect {
 	if (!$sock) {
 		my $reason = $self->{last_error} || 'no backend';
 
-		die "Class::Shared: cannot reach a backend for '$self->{class}' at "
+		die "Class::Shared: cannot reach a backend at "
 			. $self->shared_address . ": $reason\n"
 			unless $self->{autostart} && $self->{transport} eq 'unix';
 
 		$sock = $self->_spawn_backend;
 
-		die "Class::Shared: could not start a backend for '$self->{class}': "
+		die "Class::Shared: could not start a backend: "
 			. ($self->{last_error} || 'timed out')
 			. ' (socket ' . $self->shared_address . ", log $self->{log})\n"
 			unless $sock;
@@ -629,8 +629,7 @@ sub _exec_backend {
 		(map { ('-I', $_) } @inc),
 		'-MClass::Shared::Backend',
 		'-e',
-		'Class::Shared::Backend->new(class => $ARGV[0], socket => $ARGV[1], log => $ARGV[2])->run()',
-		$self->{class},
+		'Class::Shared::Backend->new(socket => $ARGV[0], log => $ARGV[1])->run()',
 		$self->{socket_path},
 		$self->{log},
 	);
