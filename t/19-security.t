@@ -222,7 +222,9 @@ use strict; use warnings;
 use Scalar::Util ();
 use Class::Shared::Frontend;
 
-# The class name comes from the environment, as input does.
+# The class name and the PATH come from the environment, as input does.  The
+# PATH is set here and not by the test, which needs its own to run the shell.
+$ENV{PATH} = $ENV{CS_PATH};
 my $f = Class::Shared::Frontend->new($ENV{CS_CLASS});
 print 'tainted=', (Scalar::Util::tainted(Class::Shared::validate_class($ENV{CS_CLASS})) ? 1 : 0), "\n";
 print 'inc=', $f->inc(2), "\n";
@@ -230,12 +232,39 @@ $f->shared_shutdown;
 PROGRAM
 	close($out) or BAIL_OUT("cannot close $script: $!");
 
-	local $ENV{CS_CLASS} = 'Shared::Counter';
-	my $text = `timeout 25 $^X -T -Ilib -It/lib $script 2>&1 </dev/null`;
+	# A runner's PATH usually names a directory others can write to, and perl
+	# will not exec while it does.  Each way a PATH can be unsafe is its own
+	# case, with otherwise good entries after it.  They must not be run
+	# together: an empty or relative entry makes a PATH that is checked as a
+	# whole fail early, and would hide a world-writable directory next to it.
+	my $loose = File::Spec->catdir($dir, 'loose-bin');
+	mkdir($loose, 0700) or BAIL_OUT("cannot make $loose: $!");
+	chmod(0777, $loose) or BAIL_OUT("cannot open up $loose: $!");
 
-	is($? >> 8, 0, 'under -T a frontend starts a backend and uses it');
-	like($text, qr/^tainted=0$/m, '  the class name that was checked is untainted');
-	like($text, qr/^inc=2$/m, '  and the object works');
+	my $group = File::Spec->catdir($dir, 'group-bin');
+	mkdir($group, 0700) or BAIL_OUT("cannot make $group: $!");
+	chmod(0775, $group) or BAIL_OUT("cannot open up $group: $!");
+
+	my $good = $ENV{PATH};   # the test's own, which is clean enough to find perl and timeout
+
+	for my $case (
+		['a clean PATH',                      $good],
+		['a world-writable directory first',  "$loose:$good"],
+		['a group-writable directory first',  "$group:$good"],
+		['an empty and a relative entry',     ":.:$good"],
+		['a directory that is not there',     File::Spec->catdir($dir, 'no-such-bin') . ":$good"],
+		['nothing usable at all',             "$loose:$group:."],
+	) {
+		my ($what, $path) = @{$case};
+
+		local $ENV{CS_PATH} = $path;
+		local $ENV{CS_CLASS} = 'Shared::Counter';
+		my $text = `timeout 25 $^X -T -Ilib -It/lib $script 2>&1 </dev/null`;
+
+		is($? >> 8, 0, "under -T a frontend starts a backend and uses it, with $what");
+		like($text, qr/^tainted=0$/m, '  the class name that was checked is untainted');
+		like($text, qr/^inc=2$/m, '  and the object works');
+	}
 
 	my $nul_script = File::Spec->catfile($dir, 'nul.pl');
 	open($out, '>', $nul_script) or BAIL_OUT("cannot write $nul_script: $!");

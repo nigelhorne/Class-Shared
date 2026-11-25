@@ -692,18 +692,22 @@ sub _exec_backend {
 	# vouch for, and it counts the name of the perl itself ($^X) as tainted.
 	# All are untainted here, at the one place they are used, and only under -T
 	# so that nothing changes for anyone else.  The names are only refused if
-	# they hold a NUL, which would end them early.  PATH is
-	# kept if every entry is an absolute directory, and replaced if not: a
-	# relative or empty entry would make the child look in the current
-	# directory for what it runs.
+	# they hold a NUL, which would end them early.  PATH keeps the entries that
+	# are absolute directories no one but the owner can write to, and perl
+	# insists on that: it refuses to exec at all while PATH names a directory
+	# others can write to (a CI runner's PATH usually does), because a program
+	# put there would be run in place of the one meant.  A relative or empty
+	# entry would make the child look in the current directory.
 	my ($perl, $socket, $log) = ($^X, $self->{socket_path}, $self->{log});
 	if (${^TAINT}) {
 		($perl)   = $perl   =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
 		($socket) = $socket =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
 		($log)    = $log    =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
 
-		my ($path) = ($ENV{PATH} // '') =~ m{\A(/[^:\0]*(?::/[^:\0]*)*)\z};
-		$ENV{PATH} = defined $path ? $path : '/usr/bin:/bin';
+		# The capture untaints each entry; the filetests need no untainting.
+		my @safe = grep { -d $_ && !((stat _)[2] & 0022) }
+			map { m{\A(/[^\0]*)\z} ? $1 : () } split /:/, ($ENV{PATH} // '');
+		$ENV{PATH} = @safe ? join(':', @safe) : '/usr/bin:/bin';
 		delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
 	}
 
