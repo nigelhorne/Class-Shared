@@ -30,6 +30,14 @@ Revision history for Class-Shared
           normalise_fingerprint end in a newline like the rest, so they no
           longer carry " at FILE line N".
         - Class::Shared::Backend::DESTROY no longer disturbs $@ or $!.
+        - POD rewritten for every module and the class-shared program: a
+          SYNOPSIS with several usage patterns, an API SPECIFICATION for each
+          function and method, ENCODING, COMMON PITFALLS, a FORMAL
+          SPECIFICATION in Z and a STATE DIAGRAM.
+        - Class::Shared::Backend's default max_clients is now 128, as its POD
+          has always said (the code used 512).
+        - Class::Shared::Frontend: shared_status is documented with the keys
+          it really returns (classes, not class).
         - Shared secret for TCP only: a TCP listener refuses to start without
           one, so nothing is ever thawed for a peer that has not authenticated,
           and when a token is set every frame carries an HMAC-SHA-256 of its

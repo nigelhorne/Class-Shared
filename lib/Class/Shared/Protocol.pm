@@ -221,76 +221,362 @@ sub _authentic {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
 Class::Shared::Protocol - framing for Class::Shared's socket protocol
 
 =head1 SYNOPSIS
 
-    # $socket is a connected socket to a backend:
+    use Class::Shared::Protocol;
+
+    # 1. Send one request and read one reply (blocking).
+    #    $socket is a connected socket to a backend.
     my $socket;
 
     my ($bytes, $error) = Class::Shared::Protocol::encode_frame({ op => 'ping' });
-    Class::Shared::Protocol::write_all($socket, $bytes);
+    die $error unless defined $bytes;
+
+    my ($sent, $write_error) = Class::Shared::Protocol::write_all($socket, $bytes);
+    die $write_error unless $sent;
 
     my ($message, $read_error) = Class::Shared::Protocol::read_frame($socket);
+    die $read_error unless defined $message;
 
-    # With a shared secret, every frame is authenticated:
+    # 2. The same, with a shared secret so that every frame is authenticated,
+    #    and with a 5 second limit on each wait for data.
     my $secret = 'the secret both ends were given';
-    my ($signed, $sign_error) = Class::Shared::Protocol::encode_frame({ op => 'ping' }, $secret);
-    my ($reply, $reply_error) = Class::Shared::Protocol::read_frame($socket, undef, $secret);
+
+    ($bytes, $error) = Class::Shared::Protocol::encode_frame({ op => 'ping' }, $secret);
+    Class::Shared::Protocol::write_all($socket, $bytes);
+
+    ($message, $read_error) = Class::Shared::Protocol::read_frame($socket, 5, $secret);
+
+    # 3. Read from a non-blocking socket in a loop, as the backend does.
+    my $buffer = '';
+    while (sysread($socket, my $chunk, 65536)) {
+        $buffer .= $chunk;
+
+        while (1) {
+            my ($status, $frame, $problem)
+                = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+
+            last if $status == 0;                  # need more bytes
+            die $problem if $status < 0;           # bad stream: close it
+            handle($frame);                        # status == 1: a whole frame
+        }
+    }
 
 =head1 DESCRIPTION
 
-A frame is a four byte big endian length followed by a L<Storable> image of a
-hash reference.  One request or response is in flight per connection.
+A I<frame> is one message on the wire.  It is a four byte length (in "network
+order", the most significant byte first) followed by a L<Storable> image of a
+hash reference.  One request or one reply is in flight on a connection at a
+time.
 
-When a shared secret is in use the payload is instead a 32 byte HMAC-SHA-256 of
-the body followed by the body:
+When a shared secret is in use, the data after the length is instead a 32 byte
+HMAC-SHA-256 of the body followed by the body.  (An HMAC is a short code that
+only somebody who knows the secret can calculate.  It shows that the body was
+not changed and that it came from somebody who has the secret.)
 
     length | hmac-sha256(secret, body) | storable image of the request
 
-The digest is verified before the body is thawed.  That ordering is the point:
-L<Storable::thaw> instantiates whatever the image describes, running the
-sender's choice of code, so a frame from somebody who does not know the secret
-must be rejected before it reaches Storable.
+The digest is verified before the body is thawed (turned back into Perl data).
+That ordering is the point: L<Storable::thaw> builds whatever the image
+describes, and so runs the sender's choice of code, so a frame from somebody who
+does not know the secret must be rejected before it reaches Storable.
 
 Nothing here knows what the messages mean; that lives in
 L<Class::Shared::Backend>.
 
+Every function in this module reports a problem by returning a pair, C<(undef,
+$error)> or C<(0, $error)>, and never by dying (except for a mistake such as a
+bad argument that Perl itself rejects).  Always call them in list context, as
+the examples do.  See L</COMMON PITFALLS>.
+
 =head1 FUNCTIONS
+
+The schemas in each B<API SPECIFICATION> follow the conventions of
+L<Params::Validate::Strict> (for input) and L<Return::Set> (for output).  They
+describe the function for people and for tools.  The code does not call those
+modules, and this distribution does not depend on them.
+
+=head2 encode_frame
+
+    my ($bytes, $error) = Class::Shared::Protocol::encode_frame($message, $secret);
+
+Turns a message into the bytes to send.  C<$message> must be a reference to
+data that Storable can freeze (normally a hash reference).  Pass C<$secret> to
+add the HMAC digest.
+
+Returns the framed bytes as one value, or C<(undef, $error)> if the message
+cannot be serialised (for example it holds a code reference) or if it is larger
+than C<$Class::Shared::Protocol::MAX_FRAME> (64 MiB).
+
+A secret is "given" when it is defined, so even an empty string turns
+authentication on.  Do not use an empty secret.
+
+B<Side effects:> none.  If a secret is given, L<Digest::SHA> is loaded the first
+time.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        message => { type => 'hashref', position => 0, optional => 0 },
+        secret  => { type => 'string',  position => 1, optional => 1 },
+    }
+
+=head4 Output
+
+    {
+        type        => 'string',
+        description => 'the framed bytes; on failure the list (undef, $error) instead',
+    }
+
+=head2 take_payload
+
+    my ($message, $error) = Class::Shared::Protocol::take_payload($body);
+
+Turns the body of a frame back into Perl data.  It does B<no> authentication.
+Use L</take_frame> or L</read_frame> for bytes that came from a network, because
+they check the digest first.
+
+Returns C<($message, undef)>, or C<(undef, $error)> if the bytes are not a valid
+Storable image.
+
+B<Side effects:> none.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    { body => { type => 'string', position => 0, optional => 0 } }
+
+=head4 Output
+
+    {
+        type   => 'arrayref',
+        min    => 2,
+        max    => 2,
+        schema => [
+            { type => 'hashref', optional => 1, description => 'the message, or undef on error' },
+            { type => 'string',  optional => 1, description => 'the error, or undef on success' },
+        ],
+    }
+
+=head2 write_all
+
+    my ($ok, $error) = Class::Shared::Protocol::write_all($filehandle, $bytes);
+
+Writes every byte, even if the system accepts only part of them at a time.
+Returns C<(1)> on success, or C<(0, $error)>.  While it runs, a broken pipe is
+ignored, so a backend that has just died does not kill the client with a signal;
+you get an error instead.
+
+It is meant for blocking handles.  On a non-blocking handle that cannot take
+more data right now, it returns an error and does not wait.
+
+B<Side effects:> writes to the handle.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        filehandle => { type => 'object', position => 0, optional => 0, can => 'syswrite' },
+        bytes      => { type => 'string', position => 1, optional => 0 },
+    }
+
+=head4 Output
+
+    {
+        type   => 'arrayref',
+        min    => 1,
+        max    => 2,
+        schema => [
+            { type => 'boolean', description => '1 on success, 0 on failure' },
+            { type => 'string',  optional => 1, description => 'the error, on failure' },
+        ],
+    }
+
+=head2 read_frame
+
+    my ($message, $error) = Class::Shared::Protocol::read_frame($filehandle, $timeout, $secret);
+
+Reads exactly one frame, checks its digest if a secret is given, and returns the
+message.  It waits for ever unless you give C<$timeout> in seconds.  The timeout
+applies to each wait for more data, so a peer that keeps sending slowly can take
+longer than C<$timeout> in total.
+
+Returns C<($message)>, or C<(undef, $error)> if the connection closes, the wait
+times out, the frame is too large, the digest is wrong, or the data is not a
+valid image.
+
+It understands TLS handles: it takes data that TLS has already decrypted before
+it waits for more.
+
+B<Side effects:> reads from the handle.  After an error the handle may be half
+way through a frame, so close it.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        filehandle => { type => 'object', position => 0, optional => 0, can => 'sysread' },
+        timeout    => { type => 'number', position => 1, optional => 1, min => 0 },
+        secret     => { type => 'string', position => 2, optional => 1 },
+    }
+
+=head4 Output
+
+    {
+        type   => 'arrayref',
+        min    => 1,
+        max    => 2,
+        schema => [
+            { type => 'hashref', optional => 1, description => 'the message, or undef on error' },
+            { type => 'string',  optional => 1, description => 'the error, on failure' },
+        ],
+    }
+
+=head2 take_frame
+
+    my ($status, $message, $error)
+        = Class::Shared::Protocol::take_frame(\$buffer, $secret);
+
+The non-blocking reader used by the backend's select loop.  You append bytes to
+C<$buffer> as they arrive and call this each time.  It looks at the start of
+the buffer:
 
 =over 4
 
-=item encode_frame($message, $secret)
+=item C<(1, $message, undef)>
 
-Returns the framed bytes, or C<(undef, $error)> if the message cannot be
-serialised or is larger than C<$Class::Shared::Protocol::MAX_FRAME>.  With a
-C<$secret> the frame carries an HMAC-SHA-256 of its body.
+A whole frame was there.  It has been cut out of the buffer, so call again in
+case another one follows.
 
-=item write_all($filehandle, $bytes)
+=item C<(0, undef, undef)>
 
-Writes every byte.  Returns C<(1)>, or C<(0, $error)>.
+Not enough bytes yet.  The buffer is not changed.
 
-=item read_frame($filehandle, $timeout, $secret)
+=item C<(-1, undef, $error)>
 
-Reads one frame, waiting forever unless C<$timeout> (seconds) is given.
-Returns C<($message)>, or C<(undef, $error)> on end of file, timeout, a frame
-that fails authentication, or unusable data.
+The stream cannot be used: the frame is too large, the digest is wrong, or the
+data is not a valid image.  A frame that fails its digest is discarded without
+being thawed.  Close the connection.
 
-=item take_frame(\$buffer, $secret)
+=back
 
-The non-blocking parser for the backend's select loop.  Takes one complete
-frame out of the buffer and returns C<(1, $message, undef)>; returns
-C<(0, undef, undef)> when more bytes are needed; returns C<(-1, undef,
-$error)> if the stream cannot be parsed or a frame does not authenticate.  A
-frame that fails authentication is discarded without being thawed.
+B<Side effects:> removes the bytes of one complete frame from C<$buffer>.
 
-=item take_payload($body)
+=head3 API SPECIFICATION
 
-Thaws a frame body, with no authentication.  Returns C<($message, undef)> or
-C<(undef, $error)>.  Use C<take_frame> or C<read_frame> instead when the bytes
-came from a network.
+=head4 Input
+
+    {
+        buffer => { type => 'scalarref', position => 0, optional => 0 },
+        secret => { type => 'string',    position => 1, optional => 1 },
+    }
+
+=head4 Output
+
+    {
+        type   => 'arrayref',
+        min    => 3,
+        max    => 3,
+        schema => [
+            { type => 'integer', memberof => [-1, 0, 1], description => 'status' },
+            { type => 'hashref', optional => 1, description => 'the message, when status is 1' },
+            { type => 'string',  optional => 1, description => 'the error, when status is -1' },
+        ],
+    }
+
+=head1 PACKAGE VARIABLES
+
+=over 4
+
+=item C<$Class::Shared::Protocol::MAX_FRAME>
+
+The largest body that will be sent or accepted: 64 MiB (67,108,864 bytes).  A
+frame with a digest may be 32 bytes longer.
+
+=item C<$Class::Shared::Protocol::DIGEST_SIZE>
+
+The size of the digest: 32 bytes.
+
+=back
+
+=head1 ENCODING
+
+=over 4
+
+=item The message: any Perl data, including full Unicode.
+
+Storable keeps strings exactly as they are.  Accented letters, any alphabet and
+emoji pass through unchanged, and so does the difference between a byte string
+and a character string.  Hash keys keep their characters too.  Decode your
+input before you send it and encode it when you print it.
+
+=item The frame itself: bytes.
+
+The length, the digest and the Storable image are binary.  Use a handle without
+an encoding layer (the default for a socket).  An C<:encoding(UTF-8)> layer on
+the socket would corrupt the frame.
+
+=item The secret: ASCII only.
+
+The digest is calculated by L<Digest::SHA>, which works on bytes.  A secret with
+a character above code point 255 makes the calculation die with "Wide
+character".  A secret with characters from 128 to 255 gives a different digest
+as bytes (for example read from a file) than as characters (for example typed in
+your program), so the two ends will not agree.  Use ASCII.
+
+=back
+
+=head1 COMMON PITFALLS
+
+=over 4
+
+=item Call the functions in list context.
+
+On failure they return a pair, and in scalar context Perl gives you only the
+last value of that pair: the error text.  That is a true value.  So
+C<my $bytes = encode_frame($message)> followed by C<if ($bytes)> treats a failure
+as success.  Write C<my ($bytes, $error) = ...> and test that C<$bytes> is
+defined.
+
+=item An undef secret means "no authentication".
+
+If your secret variable is accidentally undef, frames are sent and accepted
+without a digest and without any warning from this module.  The backend refuses
+this on TCP, but check your own code.
+
+=item Both ends must agree about the secret.
+
+If one side uses a secret and the other does not, every frame fails with "frame
+failed authentication" or "cannot deserialise message".
+
+=item C<take_payload> trusts its input.
+
+It does not check a digest.  Thawing data from a stranger can run code.  Use it
+only on bytes you have already authenticated.
+
+=item C<read_frame> has no total time limit.
+
+The timeout restarts for each wait.  If you need a hard limit, wrap the call in
+your own alarm.
+
+=item A failed C<read_frame> leaves the handle in an unknown place.
+
+Close the handle; do not try to read the next frame from it.
+
+=item Do not send a code reference, a file handle or a tied object.
+
+Storable cannot store them, and C<encode_frame> returns an error.
 
 =back
 
@@ -305,11 +591,159 @@ can write to; a TCP listener always has one.
 
 =head1 SEE ALSO
 
-L<Class::Shared::Frontend>, L<Class::Shared::Backend>.
+L<Class::Shared>, L<Class::Shared::Frontend>, L<Class::Shared::Backend>.
 
 =head1 AUTHOR
 
 Nigel Horne
+
+=head1 FORMAL SPECIFICATION
+
+This section describes what each function does in the Z notation, a way of
+writing exactly what a program promises using sets and logic.  You do not need
+it to use the module.  Read the plain text above first.
+
+Z uses mathematical symbols, so this is the only part of the file that is not
+plain ASCII.  A short key:
+
+    x? input      x! output      x' the value of x after the operation
+    =>  implies   /\  and        \/  or        ~  not
+    seq  a sequence (an ordered list)      #  the length of a sequence
+
+=head2 Basic types
+
+    BYTE     == 0 .. 255
+    BYTES    == seq BYTE
+    MSG      == the data Storable can freeze (hash references and what they hold)
+    SECRET   == BYTES ∪ {⊥}                  ⊥ means "no secret"
+    MAXFRAME == 67108864        DIGEST == 32
+    be32 : ℕ → BYTES             the four byte big-endian form of a number
+    freeze : MSG ⇸ BYTES         thaw = freeze⁻¹ (defined only for valid images)
+    hmac : SECRET × BYTES → BYTES    always 32 bytes long
+    PAIR[A, B] == A × B
+
+=head2 encode_frame
+
+    ┌─ EncodeFrame ───────────────────────────────────────────
+    │ m? : MSG ; k? : SECRET ; out! : BYTES ∪ {⊥} × STRING⊥
+    ├─────────────────────────────────────────────────────────
+    │ m? ∉ dom freeze ∨ #freeze(m?) > MAXFRAME
+    │     ⇒ out! = (⊥, e)  for some error text e
+    │ k? = ⊥ ∧ m? ∈ dom freeze ∧ #freeze(m?) ≤ MAXFRAME
+    │     ⇒ out! = (be32(#freeze(m?)) ⌢ freeze(m?), ⊥)
+    │ k? ≠ ⊥ ∧ m? ∈ dom freeze ∧ #freeze(m?) ≤ MAXFRAME
+    │     ⇒ out! = (be32(32 + #freeze(m?)) ⌢ hmac(k?, freeze(m?)) ⌢ freeze(m?), ⊥)
+    └─────────────────────────────────────────────────────────
+
+=head2 take_payload
+
+    ┌─ TakePayload ───────────────────────────────────────────
+    │ body? : BYTES ; out! : MSG⊥ × STRING⊥
+    ├─────────────────────────────────────────────────────────
+    │ body? ∈ ran freeze ⇒ out! = (thaw(body?), ⊥)
+    │ body? ∉ ran freeze ⇒ out! = (⊥, e)
+    └─────────────────────────────────────────────────────────
+
+=head2 write_all
+
+    ┌─ WriteAll ──────────────────────────────────────────────
+    │ fh? : HANDLE ; bytes? : BYTES ; sent, sent' : BYTES ; out! : 𝔹 × STRING⊥
+    ├─────────────────────────────────────────────────────────
+    │ every write succeeds ⇒ sent' = sent ⌢ bytes? ∧ out! = (true, ⊥)
+    │ a write fails or returns 0 ⇒ ∃ p : BYTES • p prefix_of bytes? ∧ sent' = sent ⌢ p
+    │                              ∧ out! = (false, e)
+    │ SIGPIPE is ignored for the duration, and restored afterwards
+    └─────────────────────────────────────────────────────────
+
+=head2 read_frame
+
+    ┌─ ReadFrame ─────────────────────────────────────────────
+    │ stream, stream' : BYTES ; k? : SECRET ; t? : ℝ⊥ ; out! : MSG⊥ × STRING⊥
+    ├─────────────────────────────────────────────────────────
+    │ let n = from_be32(head 4 stream), room = MAXFRAME + (32 if k? ≠ ⊥ else 0)
+    │ n ≤ room ∧ #stream ≥ 4 + n ∧ digest_ok(k?, body)
+    │     ⇒ out! = (thaw(body), ⊥) ∧ stream' = drop (4 + n) stream
+    │ n > room                       ⇒ out! = (⊥, "frame exceeds the limit")
+    │ k? ≠ ⊥ ∧ ¬ digest_ok(k?, body) ⇒ out! = (⊥, "frame failed authentication")
+    │ end of stream before 4 + n bytes ⇒ out! = (⊥, "connection closed by peer")
+    │ no data within t? seconds        ⇒ out! = (⊥, "timed out waiting for a reply")
+    │ digest_ok is checked BEFORE thaw is applied
+    └─────────────────────────────────────────────────────────
+
+=head2 take_frame
+
+    ┌─ TakeFrame ─────────────────────────────────────────────
+    │ buf, buf' : BYTES ; k? : SECRET ; out! : {-1,0,1} × MSG⊥ × STRING⊥
+    ├─────────────────────────────────────────────────────────
+    │ #buf < 4                          ⇒ out! = (0, ⊥, ⊥)  ∧ buf' = buf
+    │ n > room                          ⇒ out! = (-1, ⊥, e) ∧ buf' = buf
+    │ #buf < 4 + n                      ⇒ out! = (0, ⊥, ⊥)  ∧ buf' = buf
+    │ #buf ≥ 4 + n ∧ valid(frame)       ⇒ out! = (1, thaw(body), ⊥) ∧ buf' = drop (4 + n) buf
+    │ #buf ≥ 4 + n ∧ ¬ valid(frame)     ⇒ out! = (-1, ⊥, e)         ∧ buf' = drop (4 + n) buf
+    └─────────────────────────────────────────────────────────
+
+=head1 STATE DIAGRAM
+
+C<take_frame> works on a buffer that fills up a little at a time.  The buffer is
+the only state in this module.
+
+                        bytes arrive (you append to the buffer)
+                     +--------------------------------------------+
+                     |                                            |
+                     v                                            |
+    +----------+   < 4 bytes   +-----------+   length known,   +--------------+
+    |  EMPTY   | ------------> |  HEADER   | ----------------> |   PARTIAL    |
+    |  (0 B)   |   returns 0   | (1-3 B)   |   body not all    | (waiting for |
+    +----------+               +-----------+   here, returns 0 |  the body)   |
+        ^                                                       +--------------+
+        |                                                              |
+        |  whole frame present and valid                               | the last byte of
+        |  returns (1, $message, undef)                                | the body arrives
+        |  frame is removed from the buffer                            v
+        |                                                      +----------------+
+        +------------------------------------------------------|   COMPLETE     |
+                                                               +----------------+
+                                                                  |
+                         length too large, bad digest, or         |
+                         not a valid image: returns -1            v
+                                                         +----------------+
+                                                         |   CORRUPT      |
+                                                         | (close the     |
+                                                         |  connection)   |
+                                                         +----------------+
+
+=over 4
+
+=item EMPTY to HEADER
+
+Trigger: one to three bytes arrive.  Action: C<take_frame> returns C<(0, undef,
+undef)> and leaves the buffer alone.
+
+=item HEADER to PARTIAL
+
+Trigger: four bytes have arrived, so the length is known, but the body is not
+all there.  Action: C<take_frame> returns C<(0, undef, undef)>.  If the length is
+larger than the limit it returns C<(-1, undef, $error)> at once, without waiting
+for the body.
+
+=item PARTIAL to COMPLETE
+
+Trigger: the rest of the body arrives.  Action: the digest is checked (if there
+is a secret), then the body is thawed.
+
+=item COMPLETE to EMPTY
+
+Trigger: the frame is valid.  Action: return C<(1, $message, undef)>.  The frame
+is removed from the buffer; any bytes after it stay, and may already be the
+start of the next frame (so the state may be HEADER or PARTIAL instead).
+
+=item COMPLETE to CORRUPT
+
+Trigger: the digest is wrong, or the body is not a valid image.  Action: return
+C<(-1, undef, $error)>.  The frame is removed from the buffer without being
+thawed (if the digest was wrong).  The caller should close the connection.
+
+=back
 
 =head1 LICENSE
 

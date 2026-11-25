@@ -16,7 +16,7 @@ use Class::Shared::Protocol ();
 
 our $VERSION = '0.001.0';
 
-our $DEFAULT_MAX_CLIENTS = 512;
+our $DEFAULT_MAX_CLIENTS = 128;
 our $DEFAULT_MAX_OBJECTS = 4096;
 
 # How long a new backend waits, in seconds, for a lock that a backend which is
@@ -1164,20 +1164,34 @@ sub _log {
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
 Class::Shared::Backend - load a class once and serve objects made from it
 
 =head1 SYNOPSIS
 
-    # Normally started for you by Class::Shared::Frontend, or by hand:
+Each example is a different real-world pattern.  Most people never write this
+code: a frontend starts a backend for you, and C<class-shared serve> starts one
+from the shell.
+
     use Class::Shared::Backend;
 
+    # 1. In the foreground, on the default unix socket.  run() does not return
+    #    until the backend is told to stop (Ctrl-C, SIGTERM or "class-shared stop").
+    Class::Shared::Backend->new()->run;
+
+    # 2. An explicit unix socket path (at most 100 characters).
     Class::Shared::Backend->new(
         socket => '/run/user/1000/class-shared/class-shared.sock',
     )->run;
 
-    # On another machine:
+    # 3. In the background.  The process that calls run() EXITS (status 0) once
+    #    the background copy has been started, so run() never returns there.
+    Class::Shared::Backend->new(daemonize => 1, log => '/tmp/cs.log')->run;
+
+    # 4. Serve other machines, over TLS with client certificates and a token.
     my $secret = 'the secret its clients were given too';
     Class::Shared::Backend->new(
         host     => '0.0.0.0',
@@ -1186,6 +1200,12 @@ Class::Shared::Backend - load a class once and serve objects made from it
         tls_key  => '/etc/class-shared/server-key.pem',
         tls_ca   => '/etc/class-shared/clients-ca.pem',
         token    => $secret,
+    )->run;
+
+    # 5. Limit what the backend will hold.
+    Class::Shared::Backend->new(
+        max_clients => 20,
+        max_objects => 200,
     )->run;
 
 =head1 DESCRIPTION
@@ -1212,7 +1232,15 @@ not by the command line.
 =item socket
 
 Unix socket path.  Defaults to L<Class::Shared/socket_path>.  Use this or
-C<host>/C<port>, not both.
+C<host>/C<port>, not both.  It must be at most 100 characters; a longer path
+makes C<new> die, because the operating system would otherwise cut it short
+without saying so.
+
+=item dir
+
+The directory for the default socket, when C<socket> is not given.  Defaults to
+L<Class::Shared/default_dir>.  The lock file, the pid file and the log are kept
+next to the socket.
 
 =item host, port
 
@@ -1309,6 +1337,141 @@ has finished its handshake may sit idle for as long as it likes.
 
 =back
 
+=head1 METHODS
+
+The schemas in each B<API SPECIFICATION> follow the conventions of
+L<Params::Validate::Strict> (for input) and L<Return::Set> (for output).  They
+describe the method for people and for tools.  The code does not call those
+modules, and this distribution does not depend on them.
+
+=head2 new
+
+    my $backend = Class::Shared::Backend->new(%options);
+
+Checks the options and returns a backend that is ready to run.  It does not
+open a socket, take a lock or start anything: that happens in L</run>.  Every
+option is described in L</OPTIONS>.
+
+Choose one transport.  With neither C<host> nor C<port> you get a unix socket
+(C<socket>, or the default path).  With C<host> and C<port> you get TCP over
+TLS, which also needs C<tls_cert>, C<tls_key>, C<tls_ca> and C<token>.  A unix
+socket refuses a token and TLS files, because its permissions already decide
+who may connect.
+
+B<Side effects:> none, other than building the object.
+
+B<Dies> if the options are inconsistent: only one of C<host> and C<port>;
+C<socket> together with C<host>/C<port>; a TCP listener without a token or
+without all three TLS files; a unix socket with a token or TLS files; or an
+over-long socket path.  (A perl without unix sockets is reported by C<run>, or
+by C<new> when it has to work out the default socket path.)
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    {
+        socket            => { type => 'string',  optional => 1, min => 1, max => 100 },
+        dir               => { type => 'string',  optional => 1, min => 1 },
+        host              => { type => 'string',  optional => 1, min => 1 },
+        port              => { type => 'integer', optional => 1, min => 1, max => 65535 },
+        tls_cert          => { type => 'string',  optional => 1, min => 1 },
+        tls_key           => { type => 'string',  optional => 1, min => 1 },
+        tls_ca            => { type => 'string',  optional => 1, min => 1 },
+        token             => { type => 'string',  optional => 1, matches => qr/\A[\x20-\x7E]+\z/ },
+        log               => { type => 'string',  optional => 1, min => 1 },
+        daemonize         => { type => 'boolean', optional => 1 },
+        max_clients       => { type => 'integer', optional => 1, min => 1 },
+        max_objects       => { type => 'integer', optional => 1, min => 1 },
+        max_queued        => { type => 'integer', optional => 1, min => 1 },
+        max_queued_total  => { type => 'integer', optional => 1, min => 1 },
+        write_timeout     => { type => 'number',  optional => 1, min => 0 },
+        handshake_timeout => { type => 'number',  optional => 1, min => 0 },
+        start_timeout     => { type => 'number',  optional => 1, min => 0 },
+    }
+
+=head4 Output
+
+    { type => 'object', isa => 'Class::Shared::Backend' }
+
+=head2 run
+
+    my $status = $backend->run;
+
+Starts serving.  In order, it
+
+=over 4
+
+=item 1.
+
+goes into the background, if C<daemonize> is true (see below);
+
+=item 2.
+
+makes sure the socket directory exists and is safe;
+
+=item 3.
+
+takes the lock that makes the backend a singleton (waiting up to
+C<start_timeout> seconds for a backend that is shutting down);
+
+=item 4.
+
+opens the listening socket (removing a leftover one that nobody answers on) and
+writes the pid file;
+
+=item 5.
+
+serves clients until it is told to stop; and
+
+=item 6.
+
+closes everything, destroys every object, removes the socket and pid file, and
+releases the lock.
+
+=back
+
+It stops when it receives C<SIGTERM> or C<SIGINT>, or when a client sends the
+C<shutdown> request (for example C<class-shared stop>).  C<SIGHUP> and
+C<SIGPIPE> are ignored.
+
+Returns 0 after a normal stop.
+
+B<Background mode.> When C<daemonize> is true, C<run> forks twice.  The process
+that called it B<exits with status 0> as soon as the first fork has finished, so
+C<run> does not return there.  Only the background copy goes on.  The calling
+process does not wait for the background copy to be ready, so the socket may not
+exist yet when it exits.  If starting fails in the background copy, the reason is
+written to the log and the copy exits with status 1.
+
+B<Side effects:> creates the socket directory, a lock file (C<.owner>), a pid
+file (C<.pid>) and a log file (C<.log>) next to the socket; opens the listening
+socket; loads each class a client asks for; writes to the log.  The socket and
+the pid file are removed at a normal stop.  The lock file and the log are left
+in place.
+
+B<Dies> (when not in the background) with the reason if it cannot start: another
+backend is serving, the directory is unsafe, this perl has no unix sockets, the
+socket cannot be bound, or TLS cannot be set up.  The same reason is written to
+the log first.
+
+=head3 API SPECIFICATION
+
+=head4 Input
+
+    { }
+
+=head4 Output
+
+    { type => 'integer', memberof => [0] }
+
+=head2 DESTROY
+
+Called by Perl when the backend object goes away.  It removes the socket file,
+but only if this object created it.  A backend that failed to start because
+another one was already serving never owned the socket, so it leaves the other
+backend's socket alone.  You do not call it yourself.
+
 =head1 SINGLETON
 
 Two guards keep it to one backend per directory:
@@ -1346,8 +1509,11 @@ frame; see L<Class::Shared::Protocol>.  Clients must start with C<hello>.
 
 =item hello
 
-C<{ op =E<gt> 'hello', proto =E<gt> 2, class =E<gt> 'Class::Simple' }>.  The
-class name must match.  The reply carries the backend's pid and version.
+C<{ op =E<gt> 'hello', proto =E<gt> 2, class =E<gt> 'Class::Simple' }>.  C<proto>
+must be the backend's own protocol version.  C<class> is optional: a client that
+names none can still use C<ping> and C<shutdown>, which is how C<class-shared
+status> works.  A name is checked (see L</ENCODING>) and the class is loaded, once
+for the whole backend.  The reply carries the backend's pid and version.
 
 =item new
 
@@ -1374,6 +1540,45 @@ other.
 
 C<{ op =E<gt> 'shutdown' }>.  Replies first, then destroys every object and
 exits.
+
+=back
+
+A reply that says C<ok =E<gt> 0> also has a C<kind>, which tells a program what
+went wrong, and an C<error>, which tells a person.  The kinds are:
+
+=over 4
+
+=item protocol
+
+The request was malformed, came out of order, or spoke another protocol version.
+
+=item unknown_class
+
+The class could not be loaded.
+
+=item busy
+
+The backend is full: too many clients or too many objects.
+
+=item die
+
+The target's C<new> or method died; C<error> is its message.
+
+=item unknown_object
+
+No such object (it may have been released).
+
+=item unknown_method
+
+The target class has no such method.
+
+=item forbidden
+
+The object belongs to another connection, or the method may not be called.
+
+=item internal
+
+The backend itself failed while handling the request.
 
 =back
 
@@ -1461,9 +1666,374 @@ meantime.  Doing the handshake in C<accept> would let
 anyone who can reach the port freeze the backend for the length of the timeout,
 and the loop is single-threaded, so that would be every client.
 
+=head1 ENCODING
+
+=over 4
+
+=item Arguments, results and error text: full Unicode.
+
+Everything a client sends or receives is a L<Storable> image, which keeps
+strings exactly as they are.  Accented letters, any alphabet and emoji pass
+through the backend unchanged.  The backend does not look inside them.
+
+=item Class names: ASCII only.
+
+A class name is checked in the handshake.  Only the letters A to Z, digits and
+underscores, with C<::> between words, are accepted.
+
+=item The token: ASCII only.
+
+The digest is worked out by L<Digest::SHA> on bytes.  A character above code
+point 255 stops it from working, and a character from 128 to 255 gives a
+different answer as a Perl string than as the bytes of a file.  Use ASCII.
+
+=item Paths: ASCII is safest.
+
+C<socket>, C<dir>, C<log> and the C<tls_*> files go to the operating system as
+they are.  The 100 character limit on a socket path counts characters.
+
+=item The log: not one encoding.
+
+The log has no encoding layer.  A message with only characters up to code point
+255 is written as one byte per character (so C<caf\x{e9}> is the Latin-1 byte,
+not UTF-8).  A message with a higher character, such as an emoji, is written as
+UTF-8, and Perl prints a C<Wide character> warning.  Most log lines are the
+backend's own English text; other text can only come from an error in your own
+class (for example C<internal error while handling a request: ...>).  Read the
+log as bytes, and expect that a line may be in either form.
+
+=back
+
+=head1 COMMON PITFALLS
+
+=over 4
+
+=item With C<daemonize>, C<run> does not return in your program.
+
+The process that calls it exits with status 0 once the background copy is
+started.  Put nothing after the call that you need to run.  Also, the process
+exits before the background copy is ready, so the socket may not exist at that
+moment.
+
+=item Without C<daemonize>, C<run> does not return until the backend stops.
+
+It runs the server loop for as long as the backend lives.
+
+=item Which classes are loaded is decided by the clients.
+
+There is no C<class> option.  The class must be findable in the C<@INC> that the
+backend was started with, so start it with the right C<-I> or C<PERL5LIB>.
+
+=item The backend keeps the environment it was started with.
+
+Its C<%ENV> and its current directory are those of whoever started it.  A client
+cannot change them.
+
+=item One request at a time.
+
+A slow method makes every other client wait, whatever class they use.
+
+=item A TCP listener needs four things.
+
+C<tls_cert>, C<tls_key>, C<tls_ca> and a C<token>.  A unix socket accepts none of
+them, on purpose.
+
+=item Only one backend per directory.
+
+A second backend in the same directory exits with "another backend is already
+serving".  That failure does not touch the first backend's socket.
+
+=item A killed backend leaves files behind.
+
+After C<kill -9> the socket file and the pid file stay.  The next backend starts
+normally: it finds that nothing answers on the socket and removes it.  The lock
+file (C<.owner>) and the log are never removed.
+
+=item The log is never trimmed.
+
+It only grows.  Rotate it yourself (stop the backend, move the file, start it
+again), or give C<log> a path that something else rotates.
+
+=item The limits drop clients, not requests.
+
+A client that goes over C<max_queued>, C<max_queued_total> or C<write_timeout>
+loses its connection and, with it, its objects.
+
+=item C<max_clients> counts connections that are still shaking hands.
+
+A client over the limit is told "busy" on a unix socket.  On TCP it is simply
+closed, because the TLS handshake has not happened.
+
+=item The class's package variables are shared.
+
+All objects of a class live in one process, so all clients see the same package
+variables.  Keep state in the object.
+
+=back
+
+=head1 SEE ALSO
+
+L<Class::Shared>, L<Class::Shared::Frontend>, L<Class::Shared::Protocol>,
+L<class-shared>.
+
 =head1 AUTHOR
 
 Nigel Horne
+
+=head1 FORMAL SPECIFICATION
+
+This section describes what the backend does in the Z notation, a way of
+writing exactly what a program promises using sets and logic.  You do not need
+it to use the module.  Read the plain text above first.
+
+Z uses mathematical symbols, so this is the only part of the file that is not
+plain ASCII.  A short key:
+
+    x? input      x! output      x' the value of x after the operation
+    =>  implies   /\  and        \/  or        ~  not
+    ⊥  undef      ⊕  update a function      ⩤  remove from a function (domain subtraction)
+    ↦  maps to    ⇸  partial function       #  size of a set
+
+=head2 State
+
+    ┌─ Backend ───────────────────────────────────────────────
+    │ classes     : ℙ CLASSNAME               loaded, each once
+    │ clients     : FD ⇸ CLIENT               open connections
+    │ objects     : ℕ₁ ⇸ (OBJECT × SERIAL)    object id to its object and owner
+    │ queued      : ℕ                         bytes waiting to be written, all clients
+    │ stop        : 𝔹
+    │ owns_socket : 𝔹
+    ├─────────────────────────────────────────────────────────
+    │ #clients ≤ max_clients ∧ #objects ≤ max_objects
+    │ queued = Σ { #c.outbuf | c ∈ ran clients } ∧ queued ≤ max_queued_total
+    │ ∀ c ∈ ran clients • ∀ id ∈ c.objects • id ∈ dom objects ∧ owner(objects id) = c.serial
+    │ ∀ id ∈ dom objects • ∃ c ∈ ran clients • owner(objects id) = c.serial
+    │                                  an object never outlives its connection
+    └─────────────────────────────────────────────────────────
+
+and each CLIENT has C<class> (a class name or ⊥), C<greeted> (𝔹), C<serial>,
+C<objects> (the ids it made), C<buffer> and C<outbuf> (bytes), and C<closed>.
+
+=head2 new
+
+    ┌─ New ───────────────────────────────────────────────────
+    │ opts? : OPTIONS ; out! : RESULT[Backend]
+    ├─────────────────────────────────────────────────────────
+    │ host? = ⊥ ∧ port? = ⊥ ∧ no token ∧ no tls_*  ∧ #socket ≤ 100  ⇒ out! = value(b) ∧ b is idle
+    │ host? ≠ ⊥ ∧ port? ≠ ⊥ ∧ socket? = ⊥ ∧ token ≠ ⊥ ∧ tls_cert, tls_key, tls_ca ≠ ⊥
+    │                                                    ⇒ out! = value(b) ∧ b is idle
+    │ any other combination ⇒ ∃ m • out! = dies(m)
+    └─────────────────────────────────────────────────────────
+
+=head2 run
+
+    ┌─ Run ───────────────────────────────────────────────────
+    │ ΔBackend ; out! : RESULT[{0}]
+    ├─────────────────────────────────────────────────────────
+    │ setup succeeds ⇒ owns_socket' = (transport = unix)
+    │                  ∧ (the loop runs until stop = true)
+    │                  ∧ at the end: clients' = ∅ ∧ objects' = ∅ ∧ owns_socket' = false ∧ out! = value(0)
+    │ setup fails ∧ ¬ daemonize ⇒ out! = dies(e) ∧ owns_socket' = false
+    │ setup fails ∧ daemonize   ⇒ the background process exits 1
+    │ daemonize ⇒ the calling process exits 0 and out! is never seen
+    └─────────────────────────────────────────────────────────
+
+=head2 hello
+
+    ┌─ Hello ─────────────────────────────────────────────────
+    │ ΔBackend ; c : CLIENT ; proto? : ℕ ; class? : STRING⊥ ; out! : REPLY
+    ├─────────────────────────────────────────────────────────
+    │ proto? ≠ PROTOCOL_VERSION ⇒ out! = failure(protocol) ∧ ΞBackend
+    │ class? ∉ CLASSNAME ∧ class? ≠ ⊥ ⇒ out! = failure(protocol)
+    │ class? ∈ CLASSNAME ∧ load fails ⇒ out! = failure(unknown_class)
+    │ otherwise ⇒ c.greeted' = true ∧ c.class' = class?
+    │             ∧ classes' = classes ∪ {class? | class? ≠ ⊥} ∧ out!.ok = true
+    └─────────────────────────────────────────────────────────
+
+=head2 new (the request)
+
+    ┌─ NewObject ─────────────────────────────────────────────
+    │ ΔBackend ; c : CLIENT ; args? : seq DATA ; out! : REPLY
+    ├─────────────────────────────────────────────────────────
+    │ ¬ c.greeted ⇒ failure(protocol)            c.class = ⊥ ⇒ failure(protocol)
+    │ #objects ≥ max_objects ⇒ failure(busy)
+    │ c.class->new(args?) dies ⇒ failure(die)
+    │ c.class->new(args?) = o ∧ o is a reference
+    │     ⇒ ∃ id ∉ dom objects • objects' = objects ⊕ {id ↦ (o, c.serial)}
+    │           ∧ c.objects' = c.objects ∪ {id} ∧ out! = (ok, id)
+    └─────────────────────────────────────────────────────────
+
+=head2 call
+
+    ┌─ Call ──────────────────────────────────────────────────
+    │ ΔBackend ; c : CLIENT ; id?, m? : ... ; args? : seq DATA ; want? : {list, scalar, void}
+    ├─────────────────────────────────────────────────────────
+    │ id? ∉ dom objects ⇒ failure(unknown_object)
+    │ id? ∈ dom objects ∧ owner(objects id?) ≠ c.serial ⇒ failure(forbidden)
+    │ m? ∈ {"new", "DESTROY", "AUTOLOAD"} ⇒ failure(forbidden)
+    │ the class has no method m? ⇒ failure(unknown_method)
+    │ the method dies with e ⇒ failure(die)               objects' = objects
+    │ the method returns r ⇒ out! = (ok, shape(want?, r))   calls' = calls + 1
+    └─────────────────────────────────────────────────────────
+
+=head2 ping and shutdown
+
+    ┌─ Ping ──────────────────────────────────────────────────
+    │ ΞBackend ; c.greeted = true ; out! = (ok, counters of the state above)
+    └─────────────────────────────────────────────────────────
+
+    ┌─ Shutdown ──────────────────────────────────────────────
+    │ ΔBackend ; c.greeted = true
+    ├─────────────────────────────────────────────────────────
+    │ stop' = true ∧ out! = (ok, "shutting down")     the reply is sent first
+    └─────────────────────────────────────────────────────────
+
+=head2 drop a client
+
+    ┌─ Drop ──────────────────────────────────────────────────
+    │ ΔBackend ; c : CLIENT ; reason? : STRING
+    ├─────────────────────────────────────────────────────────
+    │ c ∈ ran clients
+    │ objects' = c.objects ⩤ objects                      its objects are destroyed
+    │ clients' = clients \ {c's descriptor}               the connection is closed
+    │ queued' = queued - #c.outbuf                        its queued reply is discarded
+    │ a log line records reason?
+    └─────────────────────────────────────────────────────────
+
+=head1 STATE DIAGRAM
+
+First, the life of the backend process.  Then, the life of one client
+connection inside it.
+
+=head2 The backend
+
+    +------+  run()  +----------+  lock taken, socket bound  +---------+
+    | IDLE | ------> | STARTING | -------------------------> | SERVING | <-+
+    +------+         +----------+                            +---------+   | requests keep
+                          |                                       |      --+ it SERVING
+             something    |                       SIGTERM, SIGINT |
+             fails        v                       or "shutdown"   v
+                     +----------+                            +----------+
+                     |  FAILED  |                            | STOPPING |
+                     +----------+                            +----------+
+                                                                   |
+                                                    cleanup done   v
+                                                              +---------+
+                                                              | STOPPED |
+                                                              +---------+
+
+=over 4
+
+=item IDLE to STARTING
+
+Trigger: C<run>.  Action: if C<daemonize>, fork twice (the caller exits 0); then
+check the directory, take the lock, and open the socket.
+
+=item STARTING to SERVING
+
+Trigger: the socket is open.  Action: the pid file is written and C<serving on
+...> is logged.  A unix backend now owns its socket.
+
+=item STARTING to FAILED
+
+Trigger: another backend holds the lock or the socket, the directory is unsafe,
+TLS cannot be set up, or the bind fails.  Action: the reason is logged.  The
+foreground C<run> dies; a background copy exits with status 1.  The other
+backend's socket is not touched.
+
+=item SERVING to SERVING
+
+Trigger: a client connects, sends a request, or goes away.  Action: see the
+client diagram below.
+
+=item SERVING to STOPPING
+
+Trigger: C<SIGTERM>, C<SIGINT> or a C<shutdown> request.  Action: the loop ends.
+
+=item STOPPING to STOPPED
+
+Trigger: cleanup finishes.  Action: queued replies get one last try to be sent,
+all connections are closed, every object is destroyed (so each C<DESTROY> runs,
+here), the socket and pid file are removed, the lock is released, C<stopped> is
+logged and C<run> returns 0.
+
+=back
+
+=head2 One client connection
+
+    +----------+  TCP: start TLS   +-------------+
+    | ACCEPTED | ----------------> | HANDSHAKING |
+    +----------+                   +-------------+
+         |                           |         |
+         | unix: no TLS              | done    | fails, or takes longer
+         |                           |         | than handshake_timeout
+         v                           v         |
+    +----------------+ <-------------+         |
+    | AWAITING HELLO | <-+  a failed hello      |
+    +----------------+ --+  changes nothing     |
+         | good hello                           |
+         v                                      |
+    +---------+  new, call, ping:               |
+    | GREETED | <-+  stays GREETED              |
+    +---------+ --+  (new adds an object)       |
+         |                                      |
+         | error, end of file, bad frame,       |
+         | or over a limit                      |
+         v                                      v
+    +----------------------------------------------+
+    |  DROPPED: objects destroyed, socket closed,  |
+    |  reason logged                               |
+    +----------------------------------------------+
+
+=over 4
+
+=item ACCEPTED to HANDSHAKING
+
+Trigger: a TCP client connects (and the backend is not full).  Action: start TLS
+without waiting.  The handshake finishes a little at a time from the loop.
+
+=item ACCEPTED to AWAITING HELLO
+
+Trigger: a unix client connects.  Action: none; its socket is already trusted by
+its file permissions.
+
+=item ACCEPTED to DROPPED
+
+Trigger: the backend already has C<max_clients> connections.  Action: a unix
+client gets a signed C<busy> reply first; a TCP client is just closed.
+
+=item HANDSHAKING to AWAITING HELLO
+
+Trigger: the TLS handshake finishes.  Action: none.
+
+=item HANDSHAKING to DROPPED
+
+Trigger: the handshake fails (for example no client certificate, or one signed
+by another CA) or takes longer than C<handshake_timeout>.  Action: logged and
+closed; no object was ever made.
+
+=item AWAITING HELLO to GREETED
+
+Trigger: a C<hello> with the right protocol version and a valid, loadable class
+(or no class).  Action: the class is loaded once (if new) and the connection is
+marked greeted.
+
+=item GREETED to GREETED
+
+Trigger: C<new>, C<call>, C<ping>.  Action: C<new> adds an object owned by this
+connection.  C<call> runs a method.  An exception from the target is sent back
+as a reply and does not change the state.
+
+=item any state to DROPPED
+
+Trigger: end of file, a read or write error, a frame that is too large or fails
+its digest, a reply that would pass C<max_queued> or C<max_queued_total>, a
+queued reply that makes no progress for C<write_timeout> seconds.  Action: the connection's objects are destroyed, its queued data is
+discarded, the socket is closed, and the reason is logged.  (When the backend
+itself stops, it closes every connection during its cleanup; that is not logged
+as a drop.)
+
+=back
 
 =head1 LICENSE
 

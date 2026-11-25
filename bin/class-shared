@@ -471,6 +471,8 @@ USAGE
 
 __END__
 
+=encoding utf8
+
 =head1 NAME
 
 class-shared - start, inspect and stop a Class::Shared backend
@@ -485,6 +487,37 @@ class-shared - start, inspect and stop a Class::Shared backend
     class-shared stop   [--dir DIR | --socket PATH]
     class-shared path   [--dir DIR | --socket PATH]
     class-shared help
+
+Real-world patterns:
+
+    # 1. Start a backend for this user, then look at it, then stop it.
+    class-shared serve
+    class-shared status
+    class-shared stop
+
+    # 2. Run it in the foreground under a supervisor (systemd, runit, ...).
+    class-shared serve -f --dir /run/myapp
+
+    # 3. Serve other machines over TLS, with a token.
+    class-shared serve --listen tcp:0.0.0.0:7000 \
+                       --token-file /etc/class-shared/token \
+                       --tls-cert server.pem --tls-key server-key.pem \
+                       --tls-ca clients-ca.pem
+
+    # 4. Ask that remote backend how it is, checking it against a CA.
+    class-shared status --host classhost.example.com --port 7000 \
+                        --token-file /etc/class-shared/token \
+                        --tls-cert client.pem --tls-key client-key.pem \
+                        --tls-ca ca.pem
+
+    # 5. Ask it again, trusting exactly one certificate by its fingerprint.
+    class-shared status --host 192.0.2.10 --port 7000 \
+                        --token-file /etc/class-shared/token \
+                        --tls-cert client.pem --tls-key client-key.pem \
+                        --tls-fingerprint AB:CD:...:EF
+
+    # 6. Find out where the socket would be.
+    class-shared path
 
 =head1 DESCRIPTION
 
@@ -668,8 +701,9 @@ and asks for nothing else.
 =head1 EXIT STATUS
 
 0 when the command succeeded, 1 when it failed (no backend, a refused request,
-a secret that does not authenticate, a socket that cannot be bound) and 2 for a
-usage error.
+a secret that does not authenticate, a socket path that is too long, standard
+output that cannot be written) and 2 for a usage error.  A background C<serve>
+exits 0 before it knows whether the backend started; see L</COMMON PITFALLS>.
 
 =head1 SEE ALSO
 
@@ -679,6 +713,191 @@ L<Class::Shared::Protocol>
 =head1 AUTHOR
 
 Nigel Horne
+
+=head1 ENCODING
+
+=over 4
+
+=item Everything you type is passed on as bytes.
+
+The command line, the file names and the options are handed on exactly as the
+shell gives them.  Nothing is decoded or re-encoded.
+
+=item The token file: ASCII only.
+
+The secret is read from the file as bytes and trimmed at the end.  Use only ASCII
+characters, because a program that holds the same secret as a Perl string may not
+get the same bytes for a non-ASCII character, and the two sides would then
+disagree.  See L<Class::Shared/ENCODING>.
+
+=item The fingerprint: hexadecimal digits.
+
+Case does not matter; colons and a C<sha256$> prefix are optional.
+
+=item Paths: ASCII is safest.
+
+A socket path is limited to 100 characters, counted as characters and not bytes.
+
+=item What the program prints.
+
+Its own messages are plain English (ASCII).  C<status> prints class names, which
+are ASCII, and the paths and addresses exactly as they were given.  The backend's
+log may hold text in more than one encoding; see
+L<Class::Shared::Backend/ENCODING>.
+
+=back
+
+=head1 COMMON PITFALLS
+
+=over 4
+
+=item C<serve> returns before the backend is ready.
+
+In the background (the default) the command exits with status 0 as soon as the
+background copy has been started.  The socket may not exist for a moment.  A
+script that runs C<class-shared serve> and then at once C<class-shared status>
+can fail the first time.  Try C<status> again, or use C<--foreground> under a
+supervisor.
+
+=item A failed C<serve> can still exit 0.
+
+The background copy reports its problems to the log, after the command has
+returned.  If another backend is already serving, the new one waits about two
+seconds for the lock and then writes C<fatal: another backend is already serving>
+to the log and exits.  The shell has already seen status 0.  After starting a
+backend, run C<class-shared status> and read the log if it says nothing.
+
+=item Give the same location to every command.
+
+C<status>, C<stop> and C<path> look in the default directory unless you give the
+same C<--dir>, C<--socket> or C<--listen> that C<serve> used.  For TCP they also
+need the matching C<--tls-*> options and C<--token-file>.
+
+=item C<stop> stops it for everybody.
+
+It destroys every client's objects, not just yours.
+
+=item A unix socket takes no token and no TLS.
+
+C<--token-file> and the C<--tls-*> options are refused without C<--listen
+tcp:...> (or C<--host> and C<--port>), on purpose.
+
+=item C<--tls-fingerprint> is for clients.
+
+C<serve> refuses it.  A listener checks its clients with C<--tls-ca>.
+
+=item The backend finds classes in the C<@INC> it was started with.
+
+Start it with the C<PERL5LIB> or C<perl -I> that your clients need.
+
+=item The log is never trimmed.
+
+It only grows.
+
+=back
+
+=head1 FORMAL SPECIFICATION
+
+This section describes what each command does in the Z notation, a way of
+writing exactly what a program promises using sets and logic.  You do not need
+it to use the program.
+
+Z uses mathematical symbols, so this is the only part of the file that is not
+plain ASCII.
+
+=head2 State
+
+    ┌─ Host ──────────────────────────────────────────────────
+    │ backends : LOCATION ⇸ BACKEND         at most one backend per location
+    │ log      : LOCATION → seq STRING      what each location's log holds
+    └─────────────────────────────────────────────────────────
+
+=head2 serve
+
+    ┌─ Serve ─────────────────────────────────────────────────
+    │ ΔHost ; loc? : LOCATION ; fg? : 𝔹 ; status! : {0, 1, 2}
+    ├─────────────────────────────────────────────────────────
+    │ options invalid ⇒ ΞHost ∧ status! = 1
+    │ fg? = false ⇒ status! = 0                  whatever happens next
+    │     ∧ (loc? ∉ dom backends  ⇒ eventually loc? ∈ dom backends')
+    │     ∧ (loc? ∈ dom backends  ⇒ log' loc? ends with "fatal: another backend is already serving"
+    │                                after start_timeout, unless that backend stopped first)
+    │ fg? = true ∧ loc? ∉ dom backends ⇒ loc? ∈ dom backends' until it stops, then status! = 0
+    │ fg? = true ∧ loc? ∈ dom backends (after start_timeout) ⇒ status! = 1
+    └─────────────────────────────────────────────────────────
+
+=head2 status
+
+    ┌─ Status ────────────────────────────────────────────────
+    │ ΞHost ; loc? : LOCATION ; text! : seq STRING ; status! : {0, 1}
+    ├─────────────────────────────────────────────────────────
+    │ loc? ∈ dom backends ∧ handshake succeeds ⇒ status! = 0 ∧ text! = report(backends loc?)
+    │ otherwise ⇒ text! = ⟨⟩ ∧ status! = 1 ∧ a reason is printed on standard error
+    └─────────────────────────────────────────────────────────
+
+=head2 stop
+
+    ┌─ Stop ──────────────────────────────────────────────────
+    │ ΔHost ; loc? : LOCATION ; status! : {0, 1}
+    ├─────────────────────────────────────────────────────────
+    │ loc? ∈ dom backends ∧ request succeeds ⇒ loc? ∉ dom backends' ∧ status! = 0 ∧ prints "stopped"
+    │ loc? ∉ dom backends ⇒ ΞHost ∧ status! = 1
+    │ unix ∧ the socket is still there after 5 seconds ⇒ status! = 1
+    └─────────────────────────────────────────────────────────
+
+=head2 path
+
+    ┌─ Path ──────────────────────────────────────────────────
+    │ ΞHost ; text! : STRING ; status! : {0, 1}
+    ├─────────────────────────────────────────────────────────
+    │ TCP options given ⇒ status! = 1
+    │ path too long ⇒ status! = 1
+    │ otherwise ⇒ text! = socket path ∧ status! = 0
+    └─────────────────────────────────────────────────────────
+
+=head1 STATE DIAGRAM
+
+The program has no state of its own.  The state that matters is the backend's,
+and each command moves it like this.
+
+                 serve                                   stop
+        (exits 0 at once; the backend       (objects destroyed, socket
+         starts a moment later)              and pid file removed)
+
+    +------------+  ------------------>  +---------+  ------------------>  +------------+
+    | NO BACKEND |                        | RUNNING |                       | NO BACKEND |
+    +------------+                        +---------+                       +------------+
+                                            |     ^
+                                            +-----+
+                          status, path, or a second serve: no change.
+                          (The second serve's copy waits about 2 seconds,
+                          logs "another backend is already serving" and
+                          exits 1.  The shell has already seen 0.)
+
+=over 4
+
+=item NO BACKEND to RUNNING
+
+Trigger: C<serve>.  Action: the command forks, the first process exits 0, and the
+background copy takes the lock, opens the socket and starts serving.
+
+=item RUNNING to NO BACKEND
+
+Trigger: C<stop>.  Action: the backend replies, destroys every object, removes
+its socket and pid file and exits.  C<stop> waits up to 5 seconds for the socket
+to disappear.
+
+=item RUNNING to RUNNING
+
+Trigger: C<status> or C<path> (they change nothing), or a second C<serve>
+(which fails in the background and changes nothing).
+
+=item NO BACKEND, a command that needs one
+
+Trigger: C<status> or C<stop> with nothing listening.  Action: a message on
+standard error and exit status 1.
+
+=back
 
 =head1 LICENSE
 
