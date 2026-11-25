@@ -389,6 +389,80 @@ $during->shared_close if $during;
 
 close $_ for @silent;
 
+# A connection that has handshaken and then stops halfway through a frame is
+# not something to wait for: the first half waits in that client's own buffer
+# while everybody else is served, and the second half must still complete it.
+my $dribbler = IO::Socket::SSL->new(
+	PeerAddr        => '127.0.0.1',
+	PeerPort        => $port,
+	Proto           => 'tcp',
+	Timeout         => 5,
+	SSL_ca_file     => $pem{ca},
+	SSL_cert_file   => $pem{client},
+	SSL_key_file    => $pem{'client-key'},
+	SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+) or BAIL_OUT('cannot open a TLS connection for the dribbling client');
+
+my ($hello_bytes) = Class::Shared::Protocol::encode_frame({
+	op    => 'hello',
+	proto => $Class::Shared::PROTOCOL_VERSION,
+	class => 'Shared::Counter',
+}, 's3cret-token');
+
+my ($sent_half) = Class::Shared::Protocol::write_all($dribbler, substr($hello_bytes, 0, 2));
+ok($sent_half, 'half a frame is sent');
+
+my $dribble_started = Time::HiRes::time();
+my $bystander = eval { frontend(ctor => [start => 13]) };
+my $dribble_elapsed = Time::HiRes::time() - $dribble_started;
+
+ok($bystander, 'a client dribbling half a frame does not stop another') or diag $@;
+is($bystander->value, 13, 'the other client has its object') if $bystander;
+cmp_ok($dribble_elapsed, '<', 3,
+	"and is served at once, not when the frame completes ($dribble_elapsed s)");
+$bystander->shared_close if $bystander;
+
+my ($sent_rest) = Class::Shared::Protocol::write_all($dribbler, substr($hello_bytes, 2));
+ok($sent_rest, 'the rest of the frame is sent');
+
+my ($greeting, $greeting_error)
+	= Class::Shared::Protocol::read_frame($dribbler, 5, 's3cret-token');
+ok($greeting, 'and the buffered frame is understood once it is complete')
+	or diag $greeting_error;
+is($greeting->{class}, 'Shared::Counter', 'as the frame that was sent') if $greeting;
+
+close $dribbler;
+
+# The harsher version: a client whose bytes are not even a whole TLS record.
+# A blocking read would sit inside the TLS layer waiting for the rest of it.
+my $partial = IO::Socket::SSL->new(
+	PeerAddr        => '127.0.0.1',
+	PeerPort        => $port,
+	Proto           => 'tcp',
+	Timeout         => 5,
+	SSL_ca_file     => $pem{ca},
+	SSL_cert_file   => $pem{client},
+	SSL_key_file    => $pem{'client-key'},
+	SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+) or BAIL_OUT('cannot open a TLS connection for the partial record');
+
+# A record header claiming 8192 bytes, and two of them: written through
+# CORE::syswrite so the TLS layer does not complete the record for us.
+my $ragged = CORE::syswrite($partial, "\x17\x03\x03\x20\x00ab");
+ok(defined $ragged, 'half a TLS record is sent');
+
+my $record_started = Time::HiRes::time();
+my $observer = eval { frontend(ctor => [start => 19]) };
+my $record_elapsed = Time::HiRes::time() - $record_started;
+
+ok($observer, 'a client with half a TLS record does not stop another') or diag $@;
+is($observer->value, 19, 'the other client has its object') if $observer;
+cmp_ok($record_elapsed, '<', 3,
+	"and is served at once, not at the end of the record ($record_elapsed s)");
+$observer->shared_close if $observer;
+
+close $partial;
+
 # The handshake deadline is a constructor option, so a backend with a short one
 # can be started here: a client that connects and says nothing has to lose its
 # slot when its time is up, and the real client has to keep working.

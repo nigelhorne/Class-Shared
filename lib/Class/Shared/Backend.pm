@@ -444,10 +444,9 @@ sub _continue_tls {
 		$client->{want_write}  = 0;
 		delete $client->{deadline};
 
-		# Frame handling is written for a blocking socket: only the
-		# handshake needed to be incremental.
-		$fh->blocking(1);
-
+		# The socket stays non-blocking: a frame, or the TLS record carrying
+		# it, that arrives in pieces waits in this client's buffer while the
+		# loop serves everybody else.
 		return 1;
 	}
 
@@ -473,12 +472,29 @@ sub _continue_tls {
 	return;
 }
 
+# True when a failed read means "not yet", not "gone": a non-blocking socket
+# with nothing to give, or a TLS record whose first bytes have arrived and whose
+# rest has not.
+sub _would_block {
+	my ($self, $fh) = @_;
+
+	return 1 if $!{EAGAIN} || $!{EWOULDBLOCK};
+	return 1 if $fh->can('want_read') && $fh->want_read;
+
+	return 0;
+}
+
 sub _serve_client {
 	my ($self, $client) = @_;
 
 	my $read = sysread($client->{fh}, my $chunk, 65536);
 
 	if (!defined $read) {
+		# Half a frame is not a fault: keep what has arrived and come back
+		# when the rest does.  The buffer is per client, so a slow sender
+		# only ever delays itself.
+		return 1 if $self->_would_block($client->{fh});
+
 		$self->_drop_client($client, "read error: $!");
 		return;
 	}
@@ -1109,6 +1125,13 @@ certificate needs and a working frontend to match, are in
 L<Class::Shared/TRANSPORT SECURITY>; F<t/certs/make-certs.sh> in the
 distribution generates the same set, with a second CA and impostor
 certificates, for the tests.
+
+Frame reads are non-blocking too.  A connection that stops halfway through a
+frame, or halfway through the TLS record carrying it, keeps what has arrived in
+its own buffer; the loop goes on serving everyone else and resumes that
+connection when the rest arrives.  Writes are the remaining place where one
+connection can hold up the loop: a client that asks for a reply and then stops
+reading it is still written to synchronously.
 
 The handshake is not done in C<accept>.  An accepted socket starts its TLS
 layer without a handshake and then finishes it, a little at a time, from the
