@@ -42,7 +42,7 @@ sub fingerprint {
 
 my $dir = tempdir(CLEANUP => 1);
 
-# Take a free port by opening one and letting it go again.
+# Take a free port, and hold it until the refusals below have been checked.
 my $probe = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1',
 	LocalPort => 0,
@@ -52,7 +52,6 @@ my $probe = IO::Socket::INET->new(
 ) or plan skip_all => "cannot open a listening TCP socket: $!";
 
 my $port = $probe->sockport;
-close $probe;
 
 my $token_file = File::Spec->catfile($dir, 'token');
 open(my $token_fh, '>', $token_file) or plan skip_all => "cannot write $token_file: $!";
@@ -66,23 +65,25 @@ my $base = "$^X -Ilib -It/lib bin/class-shared serve --class Shared::Counter "
 # A port anybody can route to must not be a port where a stranger's bytes reach
 # Storable::thaw, and must not be a port where they are readable either, so a
 # TCP listener needs both a token and TLS, and refuses to start without either.
+#
+# The port is still held while those two start: a listener that bound before
+# it checked its policy would fail with "address already in use" rather than
+# the message that names what is missing, so those messages prove the refusal
+# comes first.  The backend below then starts on the port, which proves the
+# refusals left it free, without asking the host whether a connect to a free
+# port fails.
 my $tokenless = `$base $tls 2>&1`;
 isnt($?, 0, 'a TCP listener with no token refuses to start');
 like($tokenless, qr/needs a token/, 'and says that a token is required');
+unlike($tokenless, qr/in use/i, 'and refuses before it binds the port');
 
 my $plaintext = `$base --token-file $token_file 2>&1`;
 isnt($?, 0, 'a TCP listener with no TLS refuses to start');
 like($plaintext, qr/needs --tls-cert, --tls-key and --tls-ca/,
 	'and says which TLS files it needs');
+unlike($plaintext, qr/in use/i, 'and refuses before it binds the port');
 
-my $still_closed = IO::Socket::INET->new(
-	PeerAddr => '127.0.0.1',
-	PeerPort => $port,
-	Proto    => 'tcp',
-	Timeout  => 1,
-);
-ok(!$still_closed, 'and left nothing listening on the port');
-close $still_closed if $still_closed;
+close $probe;
 
 my $pid = fork;
 if (!defined $pid) {
