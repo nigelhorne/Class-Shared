@@ -22,10 +22,19 @@ use Class::Shared ();
 #      one that would pass it is refused and dropped, the others are untouched;
 #   5. within max_queued and read slowly but steadily for longer than
 #      write_timeout: the whole reply arrives and the connection is kept.
+#
+# Whether this perl can make that socket is asked of the module, and whether a
+# directory here can really be made owner-only is asked of Test::Permissions.
 BEGIN {
-	plan skip_all => 'this exercises the reply queue over a unix socket, and '
-		. 'this perl has no unix domain sockets (Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
+	plan skip_all => 'this exercises the reply queue over a unix socket in an '
+		. 'owner-only directory, which this perl cannot provide '
+		. '(Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 }
 
 use File::Spec ();

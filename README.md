@@ -251,14 +251,15 @@ write to, so the kernel decides who may connect;
 
 A perl without unix domain sockets can run none of it, so that is the question
 the check asks, rather than a list of operating systems: a Cygwin perl has the
-sockets and works, and a Windows perl does not and is refused, whatever `$^O`
-reports.  The other two travel with them in practice: MSWin32 also reports the
-same mode bits for every directory, so no directory there can be shown to be
-owner-only.
+sockets and works.  Windows has had the sockets since Windows 10, but an
+MSWin32 perl still cannot run a backend: its `stat` reports the same mode bits
+for every directory, so none there can be shown to be owner-only and
+`Class::Shared::ensure_dir` refuses them all.
 
-The refusal does not look like a bad directory: `Class::Shared::ensure_dir` and
-`Class::Shared::socket_path` die with that explanation whenever they are
-reached on such a perl, and never with "writable by group or others".
+The refusal names what is missing: `Class::Shared::ensure_dir` and
+`Class::Shared::socket_path` die with that explanation on a perl without the
+sockets, and `Class::Shared::ensure_dir` refuses the directories it cannot
+show to be owner-only.
 
 It installs there anyway, and `Makefile.PL` says so as it runs.  Refusing to
 install would take away [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol), which is pure Perl and can

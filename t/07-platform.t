@@ -44,13 +44,14 @@ is($@, '', 'a perl that has them is not refused');
 	}
 }
 
-# On a platform that really has them, and owner-only directories to put them
-# in, the same calls work: the refusal is about the capability and nothing else.
-# Windows has the second half of that neither, whatever its sockets do, so only
-# the refusal above is checked there.
+# On a platform that has both, the same calls work: the refusal is about the
+# capability and nothing else.  Whether a directory here can really be made
+# owner-only is asked of Test::Permissions, so this skips on Windows, and on a
+# filesystem that ignores mode bits, rather than guessing from $^O.
 SKIP: {
-	skip 'MSWin32 has no POSIX directory permissions to check', 3
-		if $^O eq 'MSWin32';
+	skip 'a directory here cannot be made owner-only', 3
+		unless eval { require Test::Permissions; 1 }
+			&& Test::Permissions::can_revoke_create();
 
 	ok(Class::Shared::_has_unix_sockets(), 'this perl has unix domain sockets');
 

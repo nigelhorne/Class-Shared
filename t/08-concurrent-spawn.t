@@ -6,12 +6,19 @@ use Class::Shared ();
 
 # Two frontends starting at the same moment in one directory race for the spawn
 # lock and for the socket that now has to be shared between classes.  That path
-# needs fork() to set the race up and a unix socket in an owner-only directory,
-# so a perl that cannot make the socket is skipped wherever it runs.
+# needs fork() to set the race up and a unix socket in an owner-only directory.
+# Whether this perl can make the socket is asked of the module, and whether a
+# directory here can really be made owner-only is asked of Test::Permissions.
 BEGIN {
-	plan skip_all => 'this races fork()ed frontends over a unix socket, and '
-		. 'this perl has no unix domain sockets (Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
+	plan skip_all => 'this races fork()ed frontends over a unix socket in an '
+		. 'owner-only directory, which this perl cannot provide '
+		. '(Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 }
 
 use File::Temp qw(tempdir);

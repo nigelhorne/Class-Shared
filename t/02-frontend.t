@@ -5,13 +5,21 @@ use Test::More;
 use Class::Shared ();
 
 # A backend is reached over a unix socket in a directory only its owner can
-# write to.  What this file needs is a perl that can make the socket, which is
-# asked of the module rather than assumed from the operating system's name, so
-# a perl without them is skipped wherever it runs.
+# write to.  Whether this perl can make the socket is asked of the module, and
+# whether a directory here can really be made owner-only is asked of
+# Test::Permissions, which tries chmod rather than guessing from the platform's
+# name: on Windows chmod sets only the read-only attribute, which directories
+# ignore.
 BEGIN {
-	plan skip_all => 'the frontend here talks to a backend over a unix socket, '
-		. 'and this perl has no unix domain sockets (Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
+	plan skip_all => 'the frontend here talks to a backend over a unix socket '
+		. 'in an owner-only directory, which this perl cannot provide '
+		. '(Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 }
 
 use File::Temp qw(tempdir);

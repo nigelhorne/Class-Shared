@@ -11,13 +11,19 @@ use Class::Shared ();
 # Both answers are worked out here, at compile time, before a test is output: a
 # skip_all after tests have run is a plan for zero tests, which TAP reads as a
 # bad plan, so no test ever added above a skip can be allowed to make one.
-# Whether the socket can exist is asked of the module rather than assumed from
-# the operating system's name, so a perl without them is skipped wherever it
-# runs.
+# Whether this perl can make the socket is asked of the module, and whether a
+# directory here can really be made owner-only is asked of Test::Permissions,
+# which tries chmod rather than guessing from the platform's name.
 BEGIN {
-	plan skip_all => 'a backend here is reached over a unix socket, and this '
-		. 'perl has no unix domain sockets (Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
+	plan skip_all => 'a backend here is reached over a unix socket in an '
+		. 'owner-only directory, which this perl cannot provide '
+		. '(Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 
 	eval { require Lingua::Conjunction; 1 }
 		or plan skip_all => 'Lingua::Conjunction is not installed';

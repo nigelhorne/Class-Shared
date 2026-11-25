@@ -4,14 +4,20 @@ use warnings;
 use Test::More;
 use Class::Shared ();
 
-# The commands talk to a backend over a unix socket in an owner-only directory,
-# so what this file needs is a perl that can make the socket, which is asked of
-# the module rather than assumed from the operating system's name.
+# The commands talk to a backend over a unix socket in an owner-only directory:
+# whether this perl can make the socket is asked of the module, and whether a
+# directory here can really be made owner-only is asked of Test::Permissions,
+# which tries chmod rather than guessing from the platform's name.
 BEGIN {
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
 	plan skip_all => 'the command line admin talks to a backend over a unix '
-		. 'socket, and this perl has no unix domain sockets '
+		. 'socket in an owner-only directory, which this perl cannot provide '
 		. '(Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 }
 
 use File::Temp qw(tempdir);

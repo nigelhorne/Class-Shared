@@ -67,6 +67,7 @@ WriteMakefile(
 		'Lingua::Conjunction' => 0,
 		'Test::DescribeMe' => 0,
 		'Test::More'          => '0.98',
+		'Test::Permissions'   => 0,
 	},
 	META_MERGE       => {
 		'meta-spec' => {

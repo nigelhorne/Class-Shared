@@ -95,3 +95,10 @@ Revision history for Class-Shared
           on such a platform, deliberately: Makefile.PL prints the explanation
           instead of refusing, because Class::Shared::Protocol is portable and
           can talk to a backend elsewhere.
+
+        - The suite asks the platform whether a directory can really be made
+          owner-only instead of guessing from $^O: Test::Permissions tries a
+          chmod in the directory the fixtures live in, and on Windows, where it
+          sets only the read-only attribute that directories ignore, the answer
+          is no, so the backend tests skip there rather than failing when a
+          backend cannot start.

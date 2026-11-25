@@ -11,15 +11,21 @@ use POSIX ();
 use lib 't/lib';
 
 # A backend here keeps its lock, pid file and log beside a unix socket path in
-# an owner-only directory, so a perl without unix domain sockets cannot run one:
-# the control path is asked for before the directory is even looked at.  Ask the
-# same probe the unix socket tests ask, so such a perl is skipped wherever it
-# runs rather than failing when a backend starts.
+# an owner-only directory, so it needs both: the control path is asked for
+# before the directory is even looked at.  The module is asked whether it can
+# make the socket, and Test::Permissions whether a directory here can really be
+# made owner-only, so a perl that cannot provide both is skipped rather than
+# failing when a backend starts.
 BEGIN {
+	eval { require Test::Permissions; 1 }
+		or plan skip_all => 'Test::Permissions is needed to say whether a '
+			. 'directory can really be made owner-only, and is not installed';
+
 	plan skip_all => 'a backend here keeps its lock, pid file and log beside a '
-		. 'unix socket path, and this perl has no unix domain sockets '
-		. '(Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets();
+		. 'unix socket path in an owner-only directory, which this perl '
+		. 'cannot provide (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
 }
 
 BEGIN {
