@@ -18,6 +18,18 @@ Revision history for Class-Shared
           backend that bound the socket removes it.
         - Class::Shared::ensure_dir returns (1, undef) on success, as
           documented, instead of (1).
+        - A socket path given explicitly is checked against the sockaddr_un
+          length limit, as a generated one already was, instead of being
+          truncated by the operating system.  New Class::Shared::
+          check_socket_path, poll_pause and detach_standard_streams.
+        - Every write, close, unlink, fcntl, setsid and stream reopen is now
+          checked.  Failures are logged by the backend, carped by the
+          frontend, and reported by class-shared; class-shared exits 1 if it
+          cannot write to standard output.
+        - Error messages from Class::Shared::validate_class, read_secret and
+          normalise_fingerprint end in a newline like the rest, so they no
+          longer carry " at FILE line N".
+        - Class::Shared::Backend::DESTROY no longer disturbs $@ or $!.
         - Shared secret for TCP only: a TCP listener refuses to start without
           one, so nothing is ever thawed for a peer that has not authenticated,
           and when a token is set every frame carries an HMAC-SHA-256 of its

@@ -51,7 +51,7 @@ my $options_ok = GetOptions(
 usage(2) unless $options_ok;
 
 if ($opt{version}) {
-	print "$program $VERSION\n";
+	out("$program $VERSION\n");
 	exit 0;
 }
 
@@ -70,6 +70,7 @@ if ($command eq 'serve') {
 } elsif ($command eq 'path') {
 	show_path();
 } else {
+	# The exit status is the report if standard error is gone.
 	print STDERR "$program: unknown command '$command'\n";
 	usage(2);
 }
@@ -119,26 +120,26 @@ sub status {
 	fatal($error) unless $response;
 	fatal($response->{error} || 'the backend refused the request') unless $response->{ok};
 
-	printf "pid %d, version %s, protocol %d, %d object(s), %d call(s), up %d second(s)\n",
+	out(sprintf "pid %d, version %s, protocol %d, %d object(s), %d call(s), up %d second(s)\n",
 		$response->{pid},
 		$response->{version},
 		$response->{proto},
 		$response->{objects},
 		$response->{calls},
-		$response->{uptime};
+		$response->{uptime});
 
 	my $classes = $response->{classes};
 	$classes = [] unless ref($classes) eq 'ARRAY';
 
-	printf "classes: %s\n", (@{$classes} ? join(', ', @{$classes}) : 'none');
-	printf "address: %s\n", $response->{address};
-	printf "clients: %d\n", $response->{clients};
+	out(sprintf "classes: %s\n", (@{$classes} ? join(', ', @{$classes}) : 'none'));
+	out(sprintf "address: %s\n", $response->{address});
+	out(sprintf "clients: %d\n", $response->{clients});
 
 	# What the memory bound is holding: the bytes waiting to be written to all
 	# clients, against the ceiling that decides when a reply is refused.
-	printf "queued:  %d of %d byte(s)\n", $response->{queued}, $response->{max_queued_total};
+	out(sprintf "queued:  %d of %d byte(s)\n", $response->{queued}, $response->{max_queued_total});
 
-	printf "log:     %s\n", log_path_for();
+	out(sprintf "log:     %s\n", log_path_for());
 
 	return;
 }
@@ -150,7 +151,7 @@ sub stop {
 
 	wait_for_exit();
 
-	print "stopped\n";
+	out("stopped\n");
 
 	return;
 }
@@ -159,7 +160,7 @@ sub show_path {
 	fatal('path only makes sense for a unix socket; use --host/--port for TCP')
 		if defined $opt{listen} || defined $opt{host} || defined $opt{port};
 
-	print socket_path_for(), "\n";
+	out(socket_path_for() . "\n");
 
 	return;
 }
@@ -190,9 +191,17 @@ sub tcp_endpoint {
 }
 
 sub socket_path_for {
-	return $opt{socket} if defined $opt{socket} && length $opt{socket};
+	# Both can die (a path too long for a socket, a perl without unix sockets);
+	# say so the way every other command-line error is said, not with a raw die
+	# whose exit status is whatever errno happened to hold.
+	my $path = eval {
+		defined $opt{socket} && length $opt{socket}
+			? Class::Shared::check_socket_path($opt{socket})
+			: Class::Shared::socket_path($opt{dir});
+	};
+	fatal($@ || 'cannot work out the socket path') unless defined $path;
 
-	return Class::Shared::socket_path($opt{dir});
+	return $path;
 }
 
 sub log_path_for {
@@ -207,7 +216,7 @@ sub token {
 	# A unix socket is mode 0600 in a directory only its owner can write to, so
 	# the kernel has already decided who may connect.
 	my ($host) = tcp_endpoint();
-	fatal('a unix socket needs no token: its mode 0600 file already decides who may connect')
+	fatal("a unix socket needs no token: $Class::Shared::UNIX_TRUST_REASON")
 		unless defined $host;
 
 	return Class::Shared::read_secret($opt{token_file});
@@ -219,7 +228,7 @@ sub tls_options {
 	my %tls = map { $_ => $opt{$_} } qw(tls_cert tls_key tls_ca tls_fingerprint);
 
 	if (!defined $host) {
-		fatal('a unix socket needs no TLS: its mode 0600 file already decides who may connect')
+		fatal("a unix socket needs no TLS: $Class::Shared::UNIX_TRUST_REASON")
 			if grep { defined $tls{$_} && length $tls{$_} } keys %tls;
 		return ();
 	}
@@ -306,7 +315,7 @@ sub talk {
 	}, $secret);
 
 	if (!$hello) {
-		close $sock;
+		close_connection($sock);
 
 		# Over TLS a backend that will not accept this certificate drops the
 		# connection during the handshake: the stream closes before a reply,
@@ -336,12 +345,12 @@ sub talk {
 	}
 
 	if (!$hello->{ok}) {
-		close $sock;
+		close_connection($sock);
 		return (undef, $hello->{error} || 'the backend refused the handshake');
 	}
 
 	my ($response, $error) = exchange($sock, $request, $secret);
-	close $sock;
+	close_connection($sock);
 
 	return (undef, $error) unless $response;
 
@@ -371,10 +380,35 @@ sub wait_for_exit {
 	my $deadline = time + 5;
 
 	while (-e $socket && time < $deadline) {
-		select(undef, undef, undef, 0.02);
+		Class::Shared::poll_pause();
 	}
 
 	fatal("the backend asked to shut down but $socket is still there") if -e $socket;
+
+	return;
+}
+
+# Write to standard output and stop if that fails: a status report that went
+# nowhere, because the pipe it was sent down has closed, must not look like
+# success.
+sub out {
+	my ($text) = @_;
+
+	# Flushed here, because a buffered print only reports a full disk or a
+	# closed pipe when the buffer is finally written, which is after the
+	# program has decided it succeeded.
+	(print {*STDOUT} $text and STDOUT->flush)
+		or do { print STDERR "$program: cannot write to standard output: $!\n"; exit 1 };
+
+	return;
+}
+
+# A connection that will not close cleanly is worth a warning, but is never a
+# reason to lose the answer already in hand.
+sub close_connection {
+	my ($sock) = @_;
+
+	close($sock) or print STDERR "$program: warning: cannot close the connection: $!\n";
 
 	return;
 }
@@ -383,6 +417,8 @@ sub fatal {
 	my ($message) = @_;
 	$message = '' unless defined $message;
 	$message =~ s/\s+\z//;
+	# If standard error is gone there is nowhere left to say so, and the exit
+	# status is the report.
 	print STDERR "$program: $message\n";
 	exit 1;
 }
@@ -390,6 +426,7 @@ sub fatal {
 sub usage {
 	my ($status) = @_;
 
+	# As in fatal(): the exit status is the report if standard error is gone.
 	print STDERR <<"USAGE";
 usage: $program <command> [options]
 

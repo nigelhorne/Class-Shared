@@ -18,15 +18,23 @@ our $PROTOCOL_VERSION = 2;
 # 107 characters plus the terminator; leaving headroom keeps us portable.
 our $MAX_SOCKET_PATH = 100;
 
+# How often the loops that wait for a socket or a lock look again, in seconds.
+# One value, so every wait in the distribution polls at the same rate.
+our $POLL_INTERVAL = 0.02;
+
+# Why a unix socket takes neither a token nor TLS.  It is quoted by the backend,
+# the frontend and the command line, so they cannot word it differently.
+our $UNIX_TRUST_REASON = 'its mode 0600 file already decides who may connect';
+
 my $CLASS_RE = qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/;
 
 sub validate_class {
 	my $class = $_[0];
 
-	die 'Class::Shared: no class name given'
+	die "Class::Shared: no class name given\n"
 		unless defined $class && length $class;
 
-	die __PACKAGE__, ": '$class' is not a valid class name"
+	die "Class::Shared: '$class' is not a valid class name\n"
 		unless $class =~ $CLASS_RE;
 
 	return $class;
@@ -37,11 +45,11 @@ sub validate_class {
 sub read_secret {
 	my $path = $_[0];
 
-	die __PACKAGE__, ': no token file given' unless defined $path && length $path;
+	die "Class::Shared: no token file given\n" unless defined $path && length $path;
 
-	open(my $fh, '<', $path) or die __PACKAGE__, ": cannot read $path: $!";
+	open(my $fh, '<', $path) or die "Class::Shared: cannot read $path: $!\n";
 	my $secret = do { local $/; <$fh> };
-	close $fh;
+	close($fh) or die "Class::Shared: cannot read $path: $!\n";
 
 	$secret = '' unless defined $secret;
 	$secret =~ s/\s+\z//;
@@ -65,7 +73,7 @@ my $FINGERPRINT_RE = qr{
 sub normalise_fingerprint {
 	my $value = $_[0];
 
-	die __PACKAGE__, ': no TLS fingerprint given'
+	die "Class::Shared: no TLS fingerprint given\n"
 		unless defined $value && length $value;
 
 	my ($hex) = $value =~ $FINGERPRINT_RE
@@ -110,6 +118,40 @@ sub dir_of {
 	my ($path) = @_;
 	my $dir = File::Basename::dirname($path);
 	return length $dir ? $dir : '/';
+}
+
+# Sleep for one polling interval.  Used by every loop that waits for something
+# on the file system, so none of them spins and all of them wake at the same
+# rate.  select is the portable sub-second sleep that needs no extra module.
+sub poll_pause {
+	select(undef, undef, undef, $POLL_INTERVAL);
+
+	return;
+}
+
+# Point STDIN at the null device and STDOUT and STDERR at the log, so a
+# background process holds no terminal and its diagnostics land somewhere.  If
+# the log cannot be opened they go to the null device instead: a backend that
+# cannot log should still run.  Returns (1, undef), or (0, $why) if a stream
+# could not be reopened; the caller decides whether that is fatal, because
+# this is used both by the backend and by the forked child that becomes one.
+sub detach_standard_streams {
+	my ($log) = @_;
+
+	my $null = File::Spec->devnull;
+
+	open(STDIN, '<', $null) or return (0, "cannot reopen STDIN on $null: $!");
+
+	if (open(my $log_fh, '>>', $log)) {
+		open(STDOUT, '>&', $log_fh) or return (0, "cannot send STDOUT to $log: $!");
+		open(STDERR, '>&', $log_fh) or return (0, "cannot send STDERR to $log: $!");
+		close($log_fh) or return (0, "cannot close $log: $!");
+	} else {
+		open(STDOUT, '>', $null) or return (0, "cannot send STDOUT to $null: $!");
+		open(STDERR, '>&', \*STDOUT) or return (0, "cannot send STDERR to $null: $!");
+	}
+
+	return (1, undef);
 }
 
 # Where per-user sockets live.  Kept short because the path ends up in a
@@ -207,7 +249,15 @@ sub socket_path {
 
 	$dir = default_dir(dir => $dir);
 
-	my $path = File::Spec->catfile($dir, 'class-shared.sock');
+	return check_socket_path(File::Spec->catfile($dir, 'class-shared.sock'));
+}
+
+# A path that will not fit in a sockaddr_un is silently truncated by the
+# operating system, so a client and a backend could end up on different
+# sockets.  Refuse it instead.  Applies to a path given explicitly as well as
+# one socket_path built.
+sub check_socket_path {
+	my ($path) = @_;
 
 	if (length($path) > $MAX_SOCKET_PATH) {
 		die sprintf("Class::Shared: socket path '%s' is %d characters, more than the %d allowed; "
@@ -315,6 +365,26 @@ Returns the path of the backend socket in C<$dir>, or in the default directory
 if none is given.  There is one socket for every class, because the class is
 chosen by the client rather than by the listener.  Dies if the result would be
 too long for a C<sockaddr_un>.
+
+=item Class::Shared::check_socket_path($path)
+
+Returns C<$path>, or dies if it is longer than a C<sockaddr_un> can hold.  The
+backend, the frontend and L<class-shared> apply it to a C<socket> given
+explicitly, as C<Class::Shared::socket_path> does to the path it builds, because
+the operating system would otherwise truncate an over-long path without saying
+so.
+
+=item Class::Shared::detach_standard_streams($log)
+
+Reopens STDIN on the null device and STDOUT and STDERR on C<$log> (or on the
+null device if C<$log> cannot be opened).  Returns C<(1, undef)>, or C<(0,
+$why)> if a stream could not be reopened.  Used when a backend goes into the
+background.
+
+=item Class::Shared::poll_pause()
+
+Sleeps for one polling interval (C<$Class::Shared::POLL_INTERVAL>, 0.02
+seconds).  Every loop that waits for a socket or a lock uses it.
 
 =item Class::Shared::client_tls_options(%options)
 
@@ -469,14 +539,6 @@ handle) sees the backend's environment, not yours: its C<%ENV> is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
-
-=item *
-
-A socket path given explicitly (the C<socket> option, or C<--socket>) is not
-checked against the C<sockaddr_un> length limit, unlike one built by
-C<Class::Shared::socket_path>.  An over-long path is silently truncated by the
-operating system, so a client and a backend can end up on the wrong socket.
-Prefer C<dir> and let C<Class::Shared::socket_path> build the path.
 
 =item *
 

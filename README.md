@@ -94,6 +94,26 @@ useful when writing your own client.
     chosen by the client rather than by the listener.  Dies if the result would be
     too long for a `sockaddr_un`.
 
+- Class::Shared::check\_socket\_path($path)
+
+    Returns `$path`, or dies if it is longer than a `sockaddr_un` can hold.  The
+    backend, the frontend and [class-shared](https://metacpan.org/pod/class-shared) apply it to a `socket` given
+    explicitly, as `Class::Shared::socket_path` does to the path it builds, because
+    the operating system would otherwise truncate an over-long path without saying
+    so.
+
+- Class::Shared::detach\_standard\_streams($log)
+
+    Reopens STDIN on the null device and STDOUT and STDERR on `$log` (or on the
+    null device if `$log` cannot be opened).  Returns `(1, undef)`, or `(0,
+    $why)` if a stream could not be reopened.  Used when a backend goes into the
+    background.
+
+- Class::Shared::poll\_pause()
+
+    Sleeps for one polling interval (`$Class::Shared::POLL_INTERVAL`, 0.02
+    seconds).  Every loop that waits for a socket or a lock uses it.
+
 - Class::Shared::client\_tls\_options(%options)
 
     The TLS options an [IO::Socket::SSL](https://metacpan.org/pod/IO%3A%3ASocket%3A%3ASSL) client needs, as a list to pass straight
@@ -236,11 +256,6 @@ handle) sees the backend's environment, not yours: its `%ENV` is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
-- A socket path given explicitly (the `socket` option, or `--socket`) is not
-checked against the `sockaddr_un` length limit, unlike one built by
-`Class::Shared::socket_path`.  An over-long path is silently truncated by the
-operating system, so a client and a backend can end up on the wrong socket.
-Prefer `dir` and let `Class::Shared::socket_path` build the path.
 - A client may name any method of the target object, including a
 package-qualified one such as `Other::Package::function`, which Perl resolves
 without regard to the object's class.  Only `new`, `DESTROY` and `AUTOLOAD`

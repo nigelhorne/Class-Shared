@@ -3,9 +3,11 @@ package Class::Shared::Frontend;
 use strict;
 use warnings;
 
+use Carp ();
 use Fcntl qw(:flock O_RDWR O_CREAT);
 use File::Spec ();
 use IO::Socket::UNIX;
+use Scalar::Util ();
 use Socket qw(SOCK_STREAM);
 
 use Class::Shared ();
@@ -15,6 +17,15 @@ our $VERSION = '0.001.0';
 
 # Seconds to wait for a backend to start up and answer.
 our $DEFAULT_TIMEOUT = 10;
+
+# How long shared_shutdown waits, in seconds, for the socket to disappear.
+our $SHUTDOWN_WAIT = 5;
+
+# The descriptors a freshly forked backend closes.  Everything from 3 up belongs
+# to the client that forked it, and a daemon must not keep a client's sockets or
+# locks open.
+our $FIRST_INHERITED_FD = 3;
+our $LAST_INHERITED_FD  = 1023;
 
 our $AUTOLOAD;
 
@@ -64,12 +75,12 @@ sub new {
 	# the kernel has already decided who may connect: a token would add 32 bytes
 	# to every frame and buy nothing.
 	die "Class::Shared::Frontend->new: a unix socket needs no token: "
-		. "its mode 0600 file already decides who may connect\n"
+		. "$Class::Shared::UNIX_TRUST_REASON\n"
 		if $transport eq 'unix'
 			&& (defined $opt{token} || defined $opt{token_file});
 
 	die "Class::Shared::Frontend->new: a unix socket needs no TLS: "
-		. "its mode 0600 file already decides who may connect\n"
+		. "$Class::Shared::UNIX_TRUST_REASON\n"
 		if $transport eq 'unix'
 			&& grep { defined $opt{$_} && length $opt{$_} }
 				qw(tls_cert tls_key tls_ca tls_fingerprint);
@@ -103,7 +114,9 @@ sub new {
 	}
 
 	my $socket_path = $transport eq 'unix'
-		? ($opt{socket} || Class::Shared::socket_path($opt{dir}))
+		? ($opt{socket}
+			? Class::Shared::check_socket_path($opt{socket})
+			: Class::Shared::socket_path($opt{dir}))
 		: undef;
 
 	my $self = bless {
@@ -183,7 +196,9 @@ sub shared_close {
 
 	return 0 unless $self->{sock};
 
-	close $self->{sock};
+	# The state is cleared whether or not the close worked: the connection is
+	# unusable either way, and a caller must not be left holding half of one.
+	$self->_close($self->{sock}, 'the connection to the backend');
 	$self->{sock} = undef;
 	$self->{id} = undef;
 	$self->{pid} = undef;
@@ -211,9 +226,9 @@ sub shared_shutdown {
 	$self->shared_close;
 
 	if ($self->{transport} eq 'unix') {
-		my $deadline = time + 5;
+		my $deadline = time + $SHUTDOWN_WAIT;
 		while (-e $self->{socket_path} && time < $deadline) {
-			select(undef, undef, undef, 0.02);
+			Class::Shared::poll_pause();
 		}
 	}
 
@@ -264,7 +279,8 @@ sub can {
 
 	# Answer the way can() normally does: with something callable.
 	return sub {
-		shift if @_ && defined $_[0] && ref($_[0]) && $_[0] == $self;
+		shift if @_ && ref($_[0])
+			&& Scalar::Util::refaddr($_[0]) == Scalar::Util::refaddr($self);
 
 		return $self->_invoke_as_called($method, \@_);
 	};
@@ -422,14 +438,14 @@ sub _greet {
 	});
 
 	if (!defined $response) {
-		close $sock;
+		$self->_close($sock, 'a failed handshake');
 
 		$self->{last_error} = 'handshake failed: ' . $self->_first_exchange_failed($error);
 		return undef;
 	}
 
 	if (!$response->{ok}) {
-		close $sock;
+		$self->_close($sock, 'a refused handshake');
 		die 'Class::Shared: ' . ($response->{error} || 'the backend refused the handshake') . "\n";
 	}
 
@@ -524,6 +540,21 @@ sub _roundtrip {
 
 # ------------------------------------------------------------ spawning
 
+# Purpose:       close a handle and say so if it fails, because a failed close
+#                can mean data was lost or a lock was not released.
+# Entry:         $fh is an open handle; $what names it for the message.
+# Exit status:   1 on success, 0 on failure.
+# Side effects:  closes $fh; carps on failure.
+sub _close {
+	my ($self, $fh, $what) = @_;
+
+	return 1 if close($fh);
+
+	Carp::carp("Class::Shared::Frontend: cannot close $what: $!");
+
+	return 0;
+}
+
 sub _spawn_backend {
 	my $self = shift;
 
@@ -544,23 +575,27 @@ sub _spawn_backend {
 	}
 	if (!flock($lock, LOCK_EX)) {
 		$self->{last_error} = "cannot lock $lock_path: $!";
-		close $lock;
+		$self->_close($lock, $lock_path);
 		return undef;
 	}
 
 	# Somebody else may have started it while we waited for the lock.
 	if (my $sock = eval { $self->_greet }) {
-		close $lock;
+		$self->_close($lock, $lock_path);
 		return $sock;
 	}
 
 	# We hold the lock, so a socket that will not answer is a leftover.
-	unlink $path if -e $path;
+	if (-e $path && !unlink($path)) {
+		$self->{last_error} = "cannot remove the stale socket $path: $!";
+		$self->_close($lock, $lock_path);
+		return undef;
+	}
 
 	my $pid = fork;
 	if (!defined $pid) {
 		$self->{last_error} = "fork failed: $!";
-		close $lock;
+		$self->_close($lock, $lock_path);
 		return undef;
 	}
 
@@ -569,6 +604,10 @@ sub _spawn_backend {
 		# not reached
 	}
 
+	# The first child only forks the daemon and exits; waiting for it stops it
+	# being left as a zombie.  Its status says nothing about the backend, which
+	# is judged by whether it answers below, and waitpid fails harmlessly when
+	# SIGCHLD is ignored.
 	waitpid($pid, 0);
 
 	my $deadline = time + $self->{timeout};
@@ -584,43 +623,42 @@ sub _spawn_backend {
 			$sock = $greeted;
 			last;
 		}
-		select(undef, undef, undef, 0.02);
+		Class::Shared::poll_pause();
 	}
 
-	close $lock;
+	$self->_close($lock, $lock_path);
 
 	return $sock;
 }
 
-# Runs in the freshly forked child; never returns.
+# Runs in the freshly forked child; never returns.  There is nobody to report
+# a failure to here: the streams are not redirected yet, and the parent only
+# sees whether a backend answers.  So every step that must work is checked, and
+# a failure ends the child with status 127, after which the parent reports that
+# no backend started and points at the log.
 sub _exec_backend {
 	my ($self, $lock) = @_;
 
 	require POSIX;
 
-	close $lock if $lock;
+	if ($lock) {
+		close($lock) or POSIX::_exit(127);
+	}
 
-	POSIX::setsid();
+	POSIX::setsid() or POSIX::_exit(127);
 
 	# Double fork so the daemon is reaped by init, not by the client.
 	my $pid = fork;
 	POSIX::_exit(0) if !defined $pid || $pid > 0;
 
-	for my $fd (3 .. 1023) {
+	# Most of these numbers are not open descriptors, so POSIX::close failing
+	# with EBADF is the expected answer and is not an error.
+	for my $fd ($FIRST_INHERITED_FD .. $LAST_INHERITED_FD) {
 		POSIX::close($fd);
 	}
 
-	open(STDIN, '<', File::Spec->devnull);
-
-	my $log_opened = open(my $log_fh, '>>', $self->{log});
-	if ($log_opened) {
-		open(STDOUT, '>&', $log_fh);
-		open(STDERR, '>&', $log_fh);
-		close $log_fh;
-	} else {
-		open(STDOUT, '>', File::Spec->devnull);
-		open(STDERR, '>&', \*STDOUT);
-	}
+	my ($detached) = Class::Shared::detach_standard_streams($self->{log});
+	POSIX::_exit(127) unless $detached;
 
 	my @inc = grep { defined($_) && !ref($_) && length($_) } @INC;
 

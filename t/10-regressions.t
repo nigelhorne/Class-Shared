@@ -18,6 +18,7 @@ BEGIN {
 }
 
 use File::Temp qw(tempdir);
+use POSIX ();
 use lib 't/lib';
 
 use Class::Shared::Frontend;
@@ -103,6 +104,169 @@ my $counter = Class::Shared::Frontend->new('Shared::Counter', dir => $dir);
 	my $fresh = Class::Shared::Frontend->new('Shared::Counter', dir => $dir, autostart => 0);
 	is($fresh->shared_pid, $counter->shared_pid, 'a new frontend reaches the same backend');
 }
+
+# ------------------------------------------------------------------ messages
+
+# Every refusal from the helpers ends in a newline, so none of them appends
+# " at FILE line N" to a message meant for a person.
+for my $case (
+	['validate_class (none)',    sub { Class::Shared::validate_class(undef) }],
+	['validate_class (bad)',     sub { Class::Shared::validate_class('not a class') }],
+	['read_secret (none)',       sub { Class::Shared::read_secret(undef) }],
+	['read_secret (missing)',    sub { Class::Shared::read_secret("$dir/nope") }],
+	['normalise_fingerprint (none)', sub { Class::Shared::normalise_fingerprint(undef) }],
+) {
+	my ($name, $code) = @{$case};
+
+	eval { $code->(); 1 };
+
+	like($@, qr/\AClass::Shared: .*\n\z/s, "$name: one line, prefixed, newline terminated");
+	unlike($@, qr/ at \S+ line \d+/, "$name: carries no source location");
+}
+
+# --------------------------------------------------------------- socket length
+
+my $too_long = $dir . '/' . ('x' x 120) . '.sock';
+
+eval { Class::Shared::check_socket_path($too_long) };
+like($@, qr/more than the \d+ allowed/, 'check_socket_path refuses an over-long path');
+is(Class::Shared::check_socket_path("$dir/ok.sock"), "$dir/ok.sock", 'and returns a short one unchanged');
+
+eval { Class::Shared::Backend->new(socket => $too_long) };
+like($@, qr/more than the \d+ allowed/, 'Backend->new refuses an over-long explicit socket');
+
+eval { Class::Shared::Frontend->new('Shared::Counter', socket => $too_long, autostart => 0) };
+like($@, qr/more than the \d+ allowed/, 'Frontend->new refuses an over-long explicit socket');
+
+# The refusal names the socket, instead of the OS truncating it silently.
+{
+	my $out = qx{$^X -Ilib bin/class-shared path --socket $too_long 2>&1};
+	my $status = $? >> 8;
+
+	is($status, 1, 'class-shared path: exits 1 for an over-long --socket');
+	like($out, qr/\Aclass-shared: Class::Shared: socket path/, 'and reports it like every other CLI error');
+}
+
+# ------------------------------------------------------- the failure response
+
+is_deeply(
+	Class::Shared::Backend::_failure('busy', 'full'),
+	{ ok => 0, kind => 'busy', error => 'full' },
+	'_failure builds the documented refusal',
+);
+
+# ---------------------------------------------------------- checked I/O helpers
+
+{
+	my $log = "$dir/helpers.log";
+	my $backend = Class::Shared::Backend->new(socket => "$dir/helpers.sock", log => $log);
+
+	open(my $fh, '<', $0) or die "cannot open $0: $!";
+	close($fh);
+
+	# Closing a handle that is already closed fails; that must be logged, not lost.
+	is($backend->_close($fh, 'a test handle'), 0, 'Backend::_close reports a failed close');
+
+	open(my $good, '<', $0) or die "cannot open $0: $!";
+	is($backend->_close($good, 'a test handle'), 1, 'and a successful one');
+
+	is($backend->_unlink("$dir/not-there"), 1, '_unlink: a file that is already gone is not a failure');
+
+	# unlink refuses a directory, which is a real failure.
+	mkdir("$dir/sub") or die "cannot mkdir: $!";
+	is($backend->_unlink("$dir/sub"), 0, '_unlink: a real failure is reported');
+
+	open(my $log_fh, '<', $log) or die "cannot read $log: $!";
+	my $logged = do { local $/; <$log_fh> };
+	close($log_fh) or die "cannot close $log: $!";
+
+	like($logged, qr/cannot close a test handle/, 'the failed close reached the log');
+	like($logged, qr/cannot remove \Q$dir\E\/sub/, 'the failed unlink reached the log');
+	unlike($logged, qr/not-there/, 'a missing file was not logged');
+}
+
+{
+	my @warnings;
+	local $SIG{__WARN__} = sub { push @warnings, @_ };
+
+	open(my $fh, '<', $0) or die "cannot open $0: $!";
+	close($fh);
+
+	is($counter->_close($fh, 'a test handle'), 0, 'Frontend::_close reports a failed close');
+	like($warnings[0], qr/cannot close a test handle/, 'and carps about it');
+}
+
+# A destructor must leave the caller's $@ and $! alone.
+{
+	my $backend = Class::Shared::Backend->new(socket => "$dir/destroy.sock");
+
+	local $@ = 'keep me';
+	local $! = POSIX::ENOENT();
+
+	undef $backend;
+
+	is($@, 'keep me', 'Backend::DESTROY preserves $@');
+	is($! + 0, POSIX::ENOENT(), 'and $!');
+}
+
+# ------------------------------------------------- detaching standard streams
+
+# Done in a child process, because it replaces STDIN, STDOUT and STDERR.
+{
+	my $log = "$dir/detach.log";
+
+	my $pid = fork;
+	die "cannot fork: $!" unless defined $pid;
+
+	if (!$pid) {
+		my ($ok) = Class::Shared::detach_standard_streams($log);
+		POSIX::_exit(2) unless $ok;
+		print STDOUT "to stdout\n";
+		print STDERR "to stderr\n";
+		close(STDOUT);
+		close(STDERR);
+		POSIX::_exit(0);
+	}
+
+	waitpid($pid, 0);
+	is($? >> 8, 0, 'detach_standard_streams succeeds in a child');
+
+	open(my $log_fh, '<', $log) or die "cannot read $log: $!";
+	my $text = do { local $/; <$log_fh> };
+	close($log_fh) or die "cannot close $log: $!";
+
+	like($text, qr/to stdout/, 'STDOUT went to the log');
+	like($text, qr/to stderr/, 'STDERR went to the log');
+}
+
+{
+	# An unwritable log is not fatal: the streams go to the null device.
+	my $pid = fork;
+	die "cannot fork: $!" unless defined $pid;
+
+	if (!$pid) {
+		my ($ok) = Class::Shared::detach_standard_streams("$dir/no-such-dir/x.log");
+		POSIX::_exit($ok ? 0 : 2);
+	}
+
+	waitpid($pid, 0);
+	is($? >> 8, 0, 'an unwritable log falls back to the null device');
+}
+
+# --------------------------------------------------------- command-line output
+
+SKIP: {
+	skip '/dev/full is not available here', 2 unless -w '/dev/full';
+
+	my $out = qx{$^X -Ilib bin/class-shared path --dir $dir 2>&1 >/dev/full};
+
+	is($? >> 8, 1, 'class-shared exits 1 when standard output cannot be written');
+	like($out, qr/cannot write to standard output/, 'and says why');
+}
+
+# The poll interval is one number, shared.
+is($Class::Shared::POLL_INTERVAL, 0.02, 'the polling interval is the documented 0.02 seconds');
+is(Class::Shared::poll_pause(), undef, 'poll_pause returns nothing');
 
 $counter->shared_shutdown;
 

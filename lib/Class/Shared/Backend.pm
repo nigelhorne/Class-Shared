@@ -3,6 +3,7 @@ package Class::Shared::Backend;
 use strict;
 use warnings;
 
+use Carp ();
 use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_CREAT);
 use File::Spec ();
 use IO::Socket::INET;
@@ -17,6 +18,21 @@ our $VERSION = '0.001.0';
 
 our $DEFAULT_MAX_CLIENTS = 512;
 our $DEFAULT_MAX_OBJECTS = 4096;
+
+# How long a new backend waits, in seconds, for a lock that a backend which is
+# shutting down still holds.
+our $DEFAULT_START_TIMEOUT = 2;
+
+# The accept queue of the listening socket.
+our $LISTEN_BACKLOG = 64;
+
+# The most one read takes from a client.  A larger frame arrives over several
+# turns of the loop and waits in that client's buffer.
+our $READ_CHUNK = 65536;
+
+# While a TLS handshake is pending the loop wakes this often, in seconds, to
+# expire the ones that have run out of time.
+our $HANDSHAKE_POLL = 0.25;
 
 # How long a connection may spend on its TLS handshake.  The handshake is done
 # a little at a time from the select loop, so a peer that connects and then
@@ -37,6 +53,9 @@ our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
 # bound alone allows.  The clock is fractional, so a slow reader that keeps
 # taking bytes is not dropped early by the second hand.
 our $WRITE_TIMEOUT = 30;
+
+# What a connection is told when it asks for an object before naming a class.
+our $NO_CLASS_ERROR = 'this connection named no class in its handshake';
 
 # The backend loads each class a client names, once, and holds many objects
 # made from them: one per frontend.  Clients talk to it over a unix socket or
@@ -68,18 +87,19 @@ sub new {
 			. "to anyone who can route to it\n"
 			if grep { !defined $opt{$_} || !length $opt{$_} } qw(tls_cert tls_key tls_ca);
 	} else {
-		$socket = Class::Shared::socket_path($opt{dir})
-			unless defined $socket;
+		$socket = defined $socket
+			? Class::Shared::check_socket_path($socket)
+			: Class::Shared::socket_path($opt{dir});
 
 		# The socket is mode 0600 in a directory only its owner can write to,
 		# so the kernel has already decided who may connect: a digest on every
 		# frame would buy nothing here and cost 32 bytes on each message.
 		die "Class::Shared::Backend->new: a unix socket needs no token: "
-			. "its mode 0600 file already decides who may connect\n"
+			. "$Class::Shared::UNIX_TRUST_REASON\n"
 			if defined $opt{token} && length $opt{token};
 
 		die "Class::Shared::Backend->new: a unix socket needs no TLS: "
-			. "its mode 0600 file already decides who may connect\n"
+			. "$Class::Shared::UNIX_TRUST_REASON\n"
 			if grep { defined $opt{$_} && length $opt{$_} } qw(tls_cert tls_key tls_ca);
 	}
 
@@ -119,7 +139,9 @@ sub new {
 		handshake_timeout => defined $opt{handshake_timeout}
 			? $opt{handshake_timeout}
 			: $HANDSHAKE_TIMEOUT,
-		start_timeout => defined $opt{start_timeout} ? $opt{start_timeout} : 2,
+		start_timeout => defined $opt{start_timeout}
+			? $opt{start_timeout}
+			: $DEFAULT_START_TIMEOUT,
 		objects       => {},
 		clients       => {},
 		queued        => 0,
@@ -172,7 +194,16 @@ sub DESTROY {
 	my $self = shift;
 	return if $self->{cleaned};
 	$self->{cleaned} = 1;
-	unlink $self->{socket} if $self->{owns_socket} && -e $self->{socket};
+
+	# A destructor must not disturb the $@ or $! of the code that was running
+	# when the object went out of scope.
+	local ($@, $!);
+
+	if ($self->{owns_socket} && -e $self->{socket}) {
+		unlink($self->{socket})
+			or Carp::carp("Class::Shared::Backend: cannot remove $self->{socket}: $!");
+	}
+
 	return;
 }
 
@@ -225,7 +256,7 @@ sub _setup {
 		if (time >= $deadline) {
 			die "another backend is already serving ($lock_path is locked)\n";
 		}
-		select(undef, undef, undef, 0.02);
+		Class::Shared::poll_pause();
 	}
 	$self->{lock} = $lock;
 
@@ -235,13 +266,19 @@ sub _setup {
 		$self->_setup_tcp;
 	}
 
-	fcntl($self->{listener}, F_SETFD, FD_CLOEXEC);
+	# A listener that leaked into a method's exec'd child would keep the socket
+	# open after this backend had gone.
+	fcntl($self->{listener}, F_SETFD, FD_CLOEXEC)
+		or die "cannot mark the listener close-on-exec: $!\n";
 
+	# The pid file is a convenience for administrators, so failing to write it
+	# is logged and not fatal.
 	my $pid_path = $self->{control} . '.pid';
-	if (open(my $pid_fh, '>', $pid_path)) {
-		print {$pid_fh} "$$\n";
-		close $pid_fh;
-	}
+	my $pid_fh;
+	open($pid_fh, '>', $pid_path)
+		&& print({$pid_fh} "$$\n")
+		&& close($pid_fh)
+		or $self->_log("cannot write $pid_path: $!");
 
 	return 1;
 }
@@ -252,7 +289,7 @@ sub _setup_unix {
 	if (-e $self->{socket}) {
 		my $probe = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $self->{socket});
 		if ($probe) {
-			close $probe;
+			$self->_close($probe, 'the probe connection');
 			die "a backend is already listening on $self->{socket}\n";
 		}
 		unlink $self->{socket}
@@ -262,7 +299,7 @@ sub _setup_unix {
 	my $listener = IO::Socket::UNIX->new(
 		Type     => SOCK_STREAM,
 		Local    => $self->{socket},
-		Listen   => 64,
+		Listen   => $LISTEN_BACKLOG,
 		Blocking => 1,
 	) or die "cannot listen on $self->{socket}: $!\n";
 
@@ -308,7 +345,7 @@ sub _setup_tcp {
 		LocalAddr => $self->{host},
 		LocalPort => $self->{port},
 		Proto     => 'tcp',
-		Listen    => 64,
+		Listen    => $LISTEN_BACKLOG,
 		ReuseAddr => 1,
 	) or die "cannot listen on $self->{host}:$self->{port}: $!\n";
 
@@ -362,7 +399,7 @@ sub _loop {
 		# With a handshake in progress, or a queued reply on a deadline, wake up
 		# now and then: a peer that never speaks, or one that never reads, would
 		# otherwise keep select asleep past the deadline it is on.
-		my $timeout = $handshaking ? 0.25 : undef;
+		my $timeout = $handshaking ? $HANDSHAKE_POLL : undef;
 		if (defined $write_deadline) {
 			my $wait = $write_deadline - Time::HiRes::time();
 			$wait = 0 if $wait < 0;
@@ -455,23 +492,26 @@ sub _accept {
 		# client has not handshaken yet, so there is no session to sign one
 		# for: it is closed, and the frontend reports a failed connection.
 		if (!defined $self->{host}) {
-			my ($bytes) = Class::Shared::Protocol::encode_frame({
-				ok    => 0,
-				kind  => 'busy',
-				error => "backend is serving too many clients ($self->{max_clients})",
-			}, $self->{token});
+			my ($bytes) = Class::Shared::Protocol::encode_frame(
+				_failure('busy', "backend is serving too many clients ($self->{max_clients})"),
+				$self->{token},
+			);
 			Class::Shared::Protocol::write_all($fh, $bytes) if defined $bytes;
 		}
 
-		close $fh;
+		$self->_close($fh, 'a refused connection');
 		return;
 	}
 
-	fcntl($fh, F_SETFD, FD_CLOEXEC);
-
 	# A unix client that stops reading must not hold the loop either, so every
-	# accepted socket is non-blocking from here on, TLS or not.
-	$fh->blocking(0);
+	# accepted socket is non-blocking from here on, TLS or not.  Neither step
+	# can be skipped: a blocking socket stalls everybody, and one that leaks
+	# into an exec'd child outlives its connection.
+	if (!(fcntl($fh, F_SETFD, FD_CLOEXEC) && defined $fh->blocking(0))) {
+		$self->_log("refused a connection: cannot prepare its socket: $!");
+		$self->_close($fh, 'a refused connection');
+		return;
+	}
 
 	my $client = {
 		fh      => $fh,
@@ -489,7 +529,7 @@ sub _accept {
 		if (!$ssl) {
 			$self->_log('refused a TLS connection: '
 				. (IO::Socket::SSL::errstr() || 'cannot start a handshake'));
-			close $fh;
+			$self->_close($fh, 'a refused connection');
 			return;
 		}
 
@@ -589,7 +629,7 @@ sub _serve_client {
 	# dropped.
 	$! = 0;
 
-	my $read = sysread($client->{fh}, my $chunk, 65536);
+	my $read = sysread($client->{fh}, my $chunk, $READ_CHUNK);
 
 	if (!defined $read) {
 		# Half a frame is not a fault: keep what has arrived and come back
@@ -620,11 +660,7 @@ sub _serve_client {
 		}
 
 		if ($status < 0) {
-			$self->_send($client, {
-				ok    => 0,
-				kind  => 'protocol',
-				error => $protocol_error,
-			});
+			$self->_send($client, _failure('protocol', $protocol_error));
 			$self->_drop_client($client, $protocol_error);
 			last;
 		}
@@ -634,11 +670,7 @@ sub _serve_client {
 			my $internal = $@;
 			$internal =~ s/\s+\z//;
 			$self->_log("internal error while handling a request: $internal");
-			$response = {
-				ok    => 0,
-				kind  => 'internal',
-				error => $internal,
-			};
+			$response = _failure('internal', $internal);
 		}
 
 		$self->_send($client, $response) if defined $response;
@@ -675,7 +707,7 @@ sub _drop_client {
 	%{$owned} = ();
 
 	my $fd = fileno($client->{fh});
-	close $client->{fh};
+	$self->_close($client->{fh}, 'a client connection');
 	delete $self->{clients}{$fd} if defined $fd;
 
 	return 1;
@@ -690,11 +722,10 @@ sub _send {
 
 	if (!defined $bytes) {
 		my $error = $encode_error;
-		($bytes) = Class::Shared::Protocol::encode_frame({
-			ok    => 0,
-			kind  => 'protocol',
-			error => $error,
-		}, $self->{token});
+		($bytes) = Class::Shared::Protocol::encode_frame(
+			_failure('protocol', $error),
+			$self->{token},
+		);
 
 		# Neither the reply nor the frame saying it could not be sent can be
 		# encoded, so this client will never hear anything: say so here.
@@ -787,11 +818,23 @@ sub _flush {
 
 # ------------------------------------------------------------- request ops
 
+# Purpose:       build the reply that says a request failed, so every refusal
+#                has the same shape and a client can rely on ok, kind and error.
+# Entry:         $kind is the machine-readable category (protocol, busy, die,
+#                forbidden, ...); $error is the text for a person.
+# Exit status:   a hash reference { ok => 0, kind => $kind, error => $error }.
+# Side effects:  none.
+sub _failure {
+	my ($kind, $error) = @_;
+
+	return { ok => 0, kind => $kind, error => $error };
+}
+
 sub _dispatch {
 	my ($self, $client, $message) = @_;
 
 	if (ref($message) ne 'HASH') {
-		return { ok => 0, kind => 'protocol', error => 'request is not a hash reference' };
+		return _failure('protocol', 'request is not a hash reference');
 	}
 
 	my $op = defined $message->{op} ? $message->{op} : '';
@@ -801,7 +844,7 @@ sub _dispatch {
 	}
 
 	if (!$client->{greeted}) {
-		return { ok => 0, kind => 'protocol', error => 'handshake required' };
+		return _failure('protocol', 'handshake required');
 	}
 
 	return $self->_op_new($client, $message) if $op eq 'new';
@@ -809,7 +852,7 @@ sub _dispatch {
 	return $self->_op_ping                  if $op eq 'ping';
 	return $self->_op_shutdown              if $op eq 'shutdown';
 
-	return { ok => 0, kind => 'protocol', error => "unknown operation '$op'" };
+	return _failure('protocol', "unknown operation '$op'");
 }
 
 sub _op_hello {
@@ -818,12 +861,9 @@ sub _op_hello {
 	my $proto = defined $message->{proto} ? $message->{proto} : 0;
 
 	if ($proto != $Class::Shared::PROTOCOL_VERSION) {
-		return {
-			ok    => 0,
-			kind  => 'protocol',
-			error => "protocol version mismatch: client speaks $proto, this backend speaks "
-				. $Class::Shared::PROTOCOL_VERSION,
-		};
+		return _failure('protocol',
+			"protocol version mismatch: client speaks $proto, this backend speaks "
+			. $Class::Shared::PROTOCOL_VERSION);
 	}
 
 	# A client may name the class it wants here, and then this connection is
@@ -837,11 +877,11 @@ sub _op_hello {
 		if (!$valid) {
 			my $error = $@ || 'bad class name';
 			$error =~ s/\s+\z//;
-			return { ok => 0, kind => 'protocol', error => $error };
+			return _failure('protocol', $error);
 		}
 
 		my ($loaded, $load_error) = $self->_load_class($wanted);
-		return { ok => 0, kind => 'unknown_class', error => $load_error }
+		return _failure('unknown_class', $load_error)
 			unless $loaded;
 
 		$client->{class} = $wanted;
@@ -862,37 +902,25 @@ sub _op_new {
 	my ($self, $client, $message) = @_;
 
 	my $class = $client->{class};
-	return {
-		ok    => 0,
-		kind  => 'protocol',
-		error => 'this connection named no class in its handshake',
-	} unless defined $class;
+	return _failure('protocol', $NO_CLASS_ERROR) unless defined $class;
 
 	my $args = $message->{args};
 	$args = [] unless defined $args;
 
-	return { ok => 0, kind => 'protocol', error => 'new: args must be an array reference' }
+	return _failure('protocol', 'new: args must be an array reference')
 		unless ref($args) eq 'ARRAY';
 
 	my $held = keys %{$self->{objects}};
 	if ($held >= $self->{max_objects}) {
-		return {
-			ok    => 0,
-			kind  => 'busy',
-			error => "this backend already holds $held objects, its limit",
-		};
+		return _failure('busy', "this backend already holds $held objects, its limit");
 	}
 
 	my $object = eval { $class->new(@{$args}) };
 	if ($@) {
-		return { ok => 0, kind => 'die', error => "$@" };
+		return _failure('die', "$@");
 	}
 
-	return {
-		ok    => 0,
-		kind  => 'protocol',
-		error => "$class->new did not return an object",
-	} unless ref($object);
+	return _failure('protocol', "$class->new did not return an object") unless ref($object);
 
 	my $id = $self->{next_id}++;
 
@@ -910,51 +938,38 @@ sub _op_call {
 	my ($self, $client, $message) = @_;
 
 	my $class = $client->{class};
-	return {
-		ok    => 0,
-		kind  => 'protocol',
-		error => 'this connection named no class in its handshake',
-	} unless defined $class;
+	return _failure('protocol', $NO_CLASS_ERROR) unless defined $class;
 
 	my $id = $message->{id};
-	return { ok => 0, kind => 'protocol', error => 'call: no object id' }
+	return _failure('protocol', 'call: no object id')
 		unless defined $id && $id =~ /\A\d+\z/;
 
 	my $entry = $self->{objects}{$id};
-	return {
-		ok    => 0,
-		kind  => 'unknown_object',
-		error => "no object #$id here; it may have been released or its client has gone",
-	} unless $entry;
+	return _failure('unknown_object',
+		"no object #$id here; it may have been released or its client has gone")
+		unless $entry;
 
-	return {
-		ok    => 0,
-		kind  => 'forbidden',
-		error => "object #$id belongs to another connection",
-	} unless $entry->{owner} == $client->{serial};
+	return _failure('forbidden', "object #$id belongs to another connection")
+		unless $entry->{owner} == $client->{serial};
 
 	my $object = $entry->{object};
 
 	my $method = $message->{method};
-	return { ok => 0, kind => 'protocol', error => 'call: no method name' }
+	return _failure('protocol', 'call: no method name')
 		unless defined $method && length $method;
 
 	my $args = $message->{args};
 	$args = [] unless defined $args;
-	return { ok => 0, kind => 'protocol', error => 'call: args must be an array reference' }
+	return _failure('protocol', 'call: args must be an array reference')
 		unless ref($args) eq 'ARRAY';
 
 	my $want = $message->{want};
 	$want = 'scalar' unless defined $want;
-	return { ok => 0, kind => 'protocol', error => "call: unknown calling context '$want'" }
+	return _failure('protocol', "call: unknown calling context '$want'")
 		unless $want =~ /\A(?:list|scalar|void)\z/;
 
 	if ($method eq 'new' or $method eq 'DESTROY' or $method eq 'AUTOLOAD') {
-		return {
-			ok    => 0,
-			kind  => 'forbidden',
-			error => "cannot call $method() through Class::Shared",
-		};
+		return _failure('forbidden', "cannot call $method() through Class::Shared");
 	}
 
 	# can() and isa() are answered locally as booleans: the code reference
@@ -962,16 +977,12 @@ sub _op_call {
 	if ($method eq 'can' or $method eq 'isa') {
 		my $name = $args->[0];
 		my $answer = eval { $object->$method($name) ? 1 : 0 };
-		return { ok => 0, kind => 'die', error => "$@" } if $@;
+		return _failure('die', "$@") if $@;
 		return { ok => 1, result => [$answer] };
 	}
 
 	if (!$class->can($method) && !$class->can('AUTOLOAD')) {
-		return {
-			ok    => 0,
-			kind  => 'unknown_method',
-			error => "$class has no method '$method'",
-		};
+		return _failure('unknown_method', "$class has no method '$method'");
 	}
 
 	my @result;
@@ -989,7 +1000,7 @@ sub _op_call {
 	};
 
 	if (!$ok) {
-		return { ok => 0, kind => 'die', error => "$@" };
+		return _failure('die', "$@");
 	}
 
 	$self->{calls}++;
@@ -1036,17 +1047,17 @@ sub _cleanup {
 	$self->{cleaned} = 1;
 
 	if ($self->{listener}) {
-		close $self->{listener};
+		$self->_close($self->{listener}, 'the listener');
 		$self->{listener} = undef;
 	}
 
-	unlink $self->{socket} if $self->{owns_socket};
+	$self->_unlink($self->{socket}) if $self->{owns_socket};
 
 	for my $client (values %{$self->{clients}}) {
 		# A reply that was queued when the backend stopped, such as the one
 		# that asked it to stop, gets one last chance to go out.
 		$self->_flush($client) unless $client->{closed};
-		close $client->{fh} unless $client->{closed};
+		$self->_close($client->{fh}, 'a client connection') unless $client->{closed};
 	}
 
 	# Every object the backend still holds is destroyed here, once, in the
@@ -1054,11 +1065,12 @@ sub _cleanup {
 	%{$self->{objects}} = ();
 	%{$self->{clients}} = ();
 
-	unlink $self->{control} . '.pid';
+	$self->_unlink($self->{control} . '.pid');
 
 	if ($self->{lock}) {
-		flock($self->{lock}, LOCK_UN);
-		close $self->{lock};
+		flock($self->{lock}, LOCK_UN)
+			or $self->_log("cannot release the lock: $!");
+		$self->_close($self->{lock}, 'the lock file');
 		$self->{lock} = undef;
 	}
 
@@ -1072,33 +1084,58 @@ sub _daemonize {
 	die "cannot fork: $!\n" unless defined $pid;
 
 	if ($pid) {
+		# The intermediate child's status is not ours to report: the real
+		# backend reports through the log.  waitpid only stops it being left
+		# as a zombie, and fails harmlessly if SIGCHLD is ignored.
 		waitpid($pid, 0);
 		exit 0;
 	}
 
 	require POSIX;
-	POSIX::setsid();
+	POSIX::setsid()
+		or die "cannot start a new session: $!\n";
 
 	my $second = fork;
 	POSIX::_exit(0) if !defined $second || $second > 0;
 
 	umask 077;
 
-	my $log_fh;
-	if (open($log_fh, '>>', $self->{log})) {
-		open(STDOUT, '>&', $log_fh);
-		open(STDERR, '>&', $log_fh);
-		close $log_fh;
-	} else {
-		open(STDOUT, '>', File::Spec->devnull);
-		open(STDERR, '>&', \*STDOUT);
-	}
-
-	open(STDIN, '<', File::Spec->devnull);
+	my ($detached, $detach_error) = Class::Shared::detach_standard_streams($self->{log});
+	die "$detach_error\n" unless $detached;
 
 	$self->{logfh} = undef;
 
 	return 1;
+}
+
+# Purpose:       close a handle and log it if the close fails, so that a failure
+#                is seen once, in the log, instead of being lost.
+# Entry:         $fh is an open handle; $what names it in the message.
+# Exit status:   1 on success, 0 on failure.
+# Side effects:  closes $fh; may write to the log.
+sub _close {
+	my ($self, $fh, $what) = @_;
+
+	return 1 if close($fh);
+
+	$self->_log("cannot close $what: " . ($! || 'unknown error'));
+
+	return 0;
+}
+
+# Purpose:       remove a file this backend made.  A file that is already gone
+#                is what was wanted, so only a real failure is logged.
+# Entry:         $path names the file.
+# Exit status:   1 if the file is gone afterwards, 0 if it could not be removed.
+# Side effects:  unlinks $path; may write to the log.
+sub _unlink {
+	my ($self, $path) = @_;
+
+	return 1 if unlink($path) || $!{ENOENT};
+
+	$self->_log("cannot remove $path: $!");
+
+	return 0;
 }
 
 sub _log {
@@ -1116,10 +1153,11 @@ sub _log {
 	}
 
 	my @now = localtime;
-	printf { $self->{logfh} } "[%d] %04d-%02d-%02d %02d:%02d:%02d %s\n",
-		$$, $now[5] + 1900, $now[4] + 1, $now[3], $now[2], $now[1], $now[0], $message;
-
-	return 1;
+	# There is nowhere else to report a failure to log, so say whether it worked.
+	return printf({ $self->{logfh} } "[%d] %04d-%02d-%02d %02d:%02d:%02d %s\n",
+		$$, $now[5] + 1900, $now[4] + 1, $now[3], $now[2], $now[1], $now[0], $message)
+		? 1
+		: 0;
 }
 
 1;
