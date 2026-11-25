@@ -22,6 +22,7 @@ on 'test' => sub {
 	requires 'File::Temp';
 	requires 'IO::Socket::SSL';
 	requires 'Lingua::Conjunction';
+	requires 'Test::DescribeMe';
 	requires 'Test::More', '0.98';
 };
 
