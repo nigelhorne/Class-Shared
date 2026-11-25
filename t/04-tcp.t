@@ -10,14 +10,15 @@ use Time::HiRes ();
 use POSIX ();
 use lib 't/lib';
 
-# The backends here are started with fork() and exec(), and their directories
-# must be owner-only, which ensure_dir only accepts on a perl that can make unix
-# domain sockets.  Ask the same probe the unix socket tests do, so a perl
-# without them is skipped wherever it runs rather than failing when a backend
-# starts.
+# A backend here keeps its lock, pid file and log beside a unix socket path in
+# an owner-only directory, so a perl without unix domain sockets cannot run one:
+# the control path is asked for before the directory is even looked at.  Ask the
+# same probe the unix socket tests ask, so such a perl is skipped wherever it
+# runs rather than failing when a backend starts.
 BEGIN {
-	plan skip_all => 'a backend here keeps an owner-only directory, and this '
-		. 'perl has no unix domain sockets (Class::Shared is Unix-only)'
+	plan skip_all => 'a backend here keeps its lock, pid file and log beside a '
+		. 'unix socket path, and this perl has no unix domain sockets '
+		. '(Class::Shared is Unix-only)'
 		unless Class::Shared::_has_unix_sockets();
 }
 

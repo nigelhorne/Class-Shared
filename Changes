@@ -59,13 +59,12 @@ Revision history for Class-Shared
           Those checks are BEGIN blocks now, and the one that cannot move above
           the tests -- t/04's backend fork, which needs the port its refusals
           hold -- bails out instead.
-        - Every test file that needs a unix socket -- t/02-frontend.t,
-          t/03-cli.t, t/06-real-class.t, t/08-concurrent-spawn.t,
-          t/09-unix-queue.t, and t/04-tcp.t and t/05-cli-tcp.t through the
-          owner-only directory ensure_dir checks -- skips on the same probe that
-          refuses the work rather than on $^O, so a perl that is not MSWin32 but
-          cannot make unix domain sockets is skipped instead of run and failed.
-          Each asks in a BEGIN block, before a test is output.
+        - Every test file that needs a unix socket -- the five unix socket
+          tests, plus t/04-tcp.t and t/05-cli-tcp.t, whose TCP backends still
+          take their control path from a unix socket path -- skips on the same
+          probe that refuses the work rather than on $^O, so a perl that is not
+          MSWin32 but cannot make unix domain sockets is skipped instead of run
+          and failed.  Each asks in a BEGIN block, before a test is output.
         - Documented ctor, which the synopsis used without saying what it was:
           the array reference of arguments for the shared class's new, sent
           once, plain data only, with a dying constructor reported by new.
