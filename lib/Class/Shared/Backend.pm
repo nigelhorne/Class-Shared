@@ -13,7 +13,7 @@ use Time::HiRes ();
 use Class::Shared ();
 use Class::Shared::Protocol ();
 
-our $VERSION = '0.01';
+our $VERSION = '0.001.0';
 
 our $DEFAULT_MAX_CLIENTS = 512;
 our $DEFAULT_MAX_OBJECTS = 4096;

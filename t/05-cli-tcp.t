@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 use File::Spec ();
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
@@ -12,13 +13,14 @@ use lib 't/lib';
 # their frames too, so check them against a TLS, token-protected TCP backend
 # rather than the unix socket t/03-cli.t uses.
 
-# That backend is started with fork() and exec(), which Win32 cannot use to run
-# a listener, and its directory must be owner-only, which its permission bits
-# never say.
+# That backend is started with fork() and exec(), and its directory must be
+# owner-only, which ensure_dir only accepts on a perl that can make unix domain
+# sockets.  Ask the same probe the unix socket tests do, so a perl without them
+# is skipped wherever it runs rather than failing when the backend starts.
 BEGIN {
-	plan skip_all => 'this backend is started with fork() in an owner-only '
-		. "directory, neither of which MSWin32 offers"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'a backend here keeps an owner-only directory, and this '
+		. 'perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 BEGIN {
@@ -28,10 +30,9 @@ BEGIN {
 
 use Net::SSLeay ();
 
-my $certs = File::Spec->catdir('t', 'certs');
-my %pem = map { $_ => File::Spec->catfile($certs, "$_.pem") }
-	qw(ca server server-key client client-key other-ca other-server
-	other-client other-client-key);
+# The certificate paths are filled in by the BEGIN block below, along with the
+# rest of the setup, so that they exist before that block runs.
+our %pem;
 
 sub fingerprint {
 	my ($pem) = @_;
@@ -44,48 +45,62 @@ sub fingerprint {
 	return unpack('H*', Net::SSLeay::X509_digest($cert, $digest));
 }
 
-my $dir = tempdir(CLEANUP => 1);
+# Everything that decides whether this file can run, and the backend it runs
+# against, is set up here, at compile time, before a test is output: a skip_all
+# after tests have run is a plan for zero tests, which TAP reads as a bad plan,
+# so no test ever added above a skip can be allowed to make one.  The child
+# exec()s inside this block and never returns, so forking here is safe.
+our ($dir, $probe, $port, $token_file, $bad_token_file, $pid);
 
-# Take a free port by opening one and letting it go again.
-my $probe = IO::Socket::INET->new(
-	LocalAddr => '127.0.0.1',
-	LocalPort => 0,
-	Proto     => 'tcp',
-	Listen    => 1,
-	ReuseAddr => 1,
-) or plan skip_all => "cannot open a listening TCP socket: $!";
+BEGIN {
+	my $certs = File::Spec->catdir('t', 'certs');
+	%pem = map { $_ => File::Spec->catfile($certs, "$_.pem") }
+		qw(ca server server-key client client-key other-ca other-server
+		other-client other-client-key);
 
-my $port = $probe->sockport;
-close $probe;
+	$dir = tempdir(CLEANUP => 1);
 
-my $token_file = File::Spec->catfile($dir, 'token');
-open(my $token_fh, '>', $token_file) or plan skip_all => "cannot write $token_file: $!";
-print {$token_fh} "cli-s3cret\n";
-close $token_fh;
+	# Take a free port by opening one and letting it go again.
+	$probe = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1',
+		LocalPort => 0,
+		Proto     => 'tcp',
+		Listen    => 1,
+		ReuseAddr => 1,
+	) or plan skip_all => "cannot open a listening TCP socket: $!";
 
-my $bad_token_file = File::Spec->catfile($dir, 'bad-token');
-open(my $bad_token_fh, '>', $bad_token_file) or plan skip_all => "cannot write $bad_token_file: $!";
-print {$bad_token_fh} "not-the-token\n";
-close $bad_token_fh;
+	$port = $probe->sockport;
+	close $probe;
 
-my $pid = fork;
-if (!defined $pid) {
-	plan skip_all => "cannot fork: $!";
-}
+	$token_file = File::Spec->catfile($dir, 'token');
+	open(my $token_fh, '>', $token_file)
+		or plan skip_all => "cannot write $token_file: $!";
+	print {$token_fh} "cli-s3cret\n";
+	close $token_fh;
 
-if ($pid == 0) {
-	no warnings 'exec';    # exec() does not return when it works
-	exec(
-		$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
-		'--listen', "tcp:127.0.0.1:$port",
-		'--token-file', $token_file,
-		'--tls-cert', $pem{server},
-		'--tls-key', $pem{'server-key'},
-		'--tls-ca', $pem{ca},
-		'--dir', $dir,
-		'-f',
-	);
-	POSIX::_exit(127);
+	$bad_token_file = File::Spec->catfile($dir, 'bad-token');
+	open(my $bad_token_fh, '>', $bad_token_file)
+		or plan skip_all => "cannot write $bad_token_file: $!";
+	print {$bad_token_fh} "not-the-token\n";
+	close $bad_token_fh;
+
+	$pid = fork;
+	plan skip_all => "cannot fork: $!" unless defined $pid;
+
+	if ($pid == 0) {
+		no warnings 'exec';    # exec() does not return when it works
+		exec(
+			$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
+			'--listen', "tcp:127.0.0.1:$port",
+			'--token-file', $token_file,
+			'--tls-cert', $pem{server},
+			'--tls-key', $pem{'server-key'},
+			'--tls-ca', $pem{ca},
+			'--dir', $dir,
+			'-f',
+		);
+		POSIX::_exit(127);
+	}
 }
 
 END {

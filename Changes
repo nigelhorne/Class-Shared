@@ -1,6 +1,6 @@
 Revision history for Class-Shared
 
-0.01    2026-11-24
+0.001.0    2026-11-25
         - First release.
         - Class::Shared::Backend holds many objects, one per client connection,
           over a unix socket or TCP, and serves every class its clients ask
@@ -50,6 +50,22 @@ Revision history for Class-Shared
           at run time rather than imported, and t/07-platform.t stops assuming
           Windows lacks the sockets by forcing the answer through the probe's
           cache, so the wiring is tested on every platform.
+        - Every decision to skip a whole test file is now made at compile time,
+          before a test is output: t/06-real-class.t decided whether
+          Lingua::Conjunction was installed after its platform skip, and the
+          socket, token file and fork setup in t/04-tcp.t, t/05-cli-tcp.t and
+          t/08-concurrent-spawn.t could sit after a test too, so an edit adding
+          one above any of them would turn the skip into a plan for zero tests.
+          Those checks are BEGIN blocks now, and the one that cannot move above
+          the tests -- t/04's backend fork, which needs the port its refusals
+          hold -- bails out instead.
+        - Every test file that needs a unix socket -- t/02-frontend.t,
+          t/03-cli.t, t/06-real-class.t, t/08-concurrent-spawn.t,
+          t/09-unix-queue.t, and t/04-tcp.t and t/05-cli-tcp.t through the
+          owner-only directory ensure_dir checks -- skips on the same probe that
+          refuses the work rather than on $^O, so a perl that is not MSWin32 but
+          cannot make unix domain sockets is skipped instead of run and failed.
+          Each asks in a BEGIN block, before a test is output.
         - Documented ctor, which the synopsis used without saying what it was:
           the array reference of arguments for the shared class's new, sent
           once, plain data only, with a dying constructor reported by new.

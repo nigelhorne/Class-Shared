@@ -3,12 +3,24 @@ use warnings;
 
 use Test::More;
 use File::Spec ();
-# AF_UNIX is asked for at run time, not imported: a perl whose Socket has no
-# such constant should skip the socket pair tests, not fail to compile.
-use Socket qw(SOCK_STREAM);
+# The unix socket constants are asked for at run time, not imported: a perl
+# whose Socket has none of them should skip the socket pair tests, not fail to
+# compile.
+use Socket ();
 use lib 't/lib';
 
 use Class::Shared::Protocol;
+
+# A connected pair of unix sockets, or an empty list where the platform cannot
+# make one.
+sub unix_socket_pair {
+	my $af_unix = eval { Socket::AF_UNIX() };
+	return unless defined $af_unix;
+
+	return unless socketpair(my $reader, my $writer, $af_unix, Socket::SOCK_STREAM(), 0);
+
+	return ($writer, $reader);
+}
 
 my $message = {
 	op     => 'call',
@@ -65,15 +77,12 @@ is_deeply($decoded, $message, 'the message survives a round trip');
 }
 
 # Real socket pair, where the platform can make one.  Windows cannot make an
-# AF_UNIX pair, and these have to be skipped in place: a skip_all after tests
-# have already run is a plan for zero tests, which TAP reads as a failure.
+# AF_UNIX pair, and this has to skip in place: a skip_all after tests have
+# already run is a plan for zero tests, which TAP reads as a failure.
 SKIP: {
-	my $af_unix = eval { Socket::AF_UNIX() };
-	my ($writer, $reader);
+	my ($writer, $reader) = unix_socket_pair();
 
-	skip 'this platform cannot make an AF_UNIX socket pair', 3
-		unless defined $af_unix
-		&& socketpair($writer, $reader, $af_unix, SOCK_STREAM, 0);
+	skip 'this platform cannot make an AF_UNIX socket pair', 3 unless $writer;
 
 	my ($written, $write_error) = Class::Shared::Protocol::write_all($writer, $bytes);
 	ok($written, 'write_all writes the frame') or diag $write_error;
@@ -170,12 +179,9 @@ SKIP: {
 
 	# read_frame authenticates the same way, before it thaws.
 	SKIP: {
-		my $af_unix = eval { Socket::AF_UNIX() };
-		my ($writer, $reader);
+		my ($writer, $reader) = unix_socket_pair();
 
-		skip 'this platform cannot make an AF_UNIX socket pair', 4
-			unless defined $af_unix
-			&& socketpair($writer, $reader, $af_unix, SOCK_STREAM, 0);
+		skip 'this platform cannot make an AF_UNIX socket pair', 4 unless $writer;
 
 		my ($sent) = Class::Shared::Protocol::write_all($writer, $broken_body);
 		ok($sent, 'a tampered frame is written to it');

@@ -11,7 +11,7 @@ use Socket qw(SOCK_STREAM);
 use Class::Shared ();
 use Class::Shared::Protocol ();
 
-our $VERSION = '0.01';
+our $VERSION = '0.001.0';
 
 # Seconds to wait for a backend to start up and answer.
 our $DEFAULT_TIMEOUT = 10;

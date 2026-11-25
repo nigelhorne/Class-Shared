@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 use File::Spec ();
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
@@ -9,13 +10,15 @@ use Time::HiRes ();
 use POSIX ();
 use lib 't/lib';
 
-# The backends here are started with fork() and exec(), which Win32 cannot use
-# to run a listener, and their directories must be owner-only, which its
-# permission bits never say.
+# The backends here are started with fork() and exec(), and their directories
+# must be owner-only, which ensure_dir only accepts on a perl that can make unix
+# domain sockets.  Ask the same probe the unix socket tests do, so a perl
+# without them is skipped wherever it runs rather than failing when a backend
+# starts.
 BEGIN {
-	plan skip_all => 'these backends are started with fork() in an owner-only '
-		. "directory, neither of which MSWin32 offers"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'a backend here keeps an owner-only directory, and this '
+		. 'perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 BEGIN {
@@ -25,7 +28,6 @@ BEGIN {
 
 use Net::SSLeay ();
 
-use Class::Shared ();
 use Class::Shared::Frontend;
 use Class::Shared::Protocol;
 
@@ -49,23 +51,32 @@ sub fingerprint {
 	return unpack('H*', Net::SSLeay::X509_digest($cert, $digest));
 }
 
-my $dir = tempdir(CLEANUP => 1);
+# Whether this file can run at all is settled here, at compile time, before a
+# test is output: a skip_all after tests have run is a plan for zero tests,
+# which TAP reads as a bad plan, so no test ever added above a skip can be
+# allowed to make one.
+our ($dir, $probe, $port, $token_file);
 
-# Take a free port, and hold it until the refusals below have been checked.
-my $probe = IO::Socket::INET->new(
-	LocalAddr => '127.0.0.1',
-	LocalPort => 0,
-	Proto     => 'tcp',
-	Listen    => 1,
-	ReuseAddr => 1,
-) or plan skip_all => "cannot open a listening TCP socket: $!";
+BEGIN {
+	$dir = tempdir(CLEANUP => 1);
 
-my $port = $probe->sockport;
+	# Take a free port, and hold it until the refusals below have been checked.
+	$probe = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1',
+		LocalPort => 0,
+		Proto     => 'tcp',
+		Listen    => 1,
+		ReuseAddr => 1,
+	) or plan skip_all => "cannot open a listening TCP socket: $!";
 
-my $token_file = File::Spec->catfile($dir, 'token');
-open(my $token_fh, '>', $token_file) or plan skip_all => "cannot write $token_file: $!";
-print {$token_fh} "s3cret-token\n";
-close $token_fh;
+	$port = $probe->sockport;
+
+	$token_file = File::Spec->catfile($dir, 'token');
+	open(my $token_fh, '>', $token_file)
+		or plan skip_all => "cannot write $token_file: $!";
+	print {$token_fh} "s3cret-token\n";
+	close $token_fh;
+}
 
 my $tls = "--tls-cert $pem{server} --tls-key $pem{'server-key'} --tls-ca $pem{ca}";
 my $base = "$^X -Ilib -It/lib bin/class-shared serve "
@@ -108,10 +119,13 @@ ok($rebound, 'and left nothing listening on the port')
 	or diag "cannot bind 127.0.0.1:$port again: $!";
 close $rebound if $rebound;
 
+# The backend cannot be forked above the refusals: it binds the port the probe
+# holds, and the probe is released only once they have run.  So a fork that
+# fails here is a bail-out rather than a skip, like the three other forks in
+# this file: a skip would have to come after tests, which is the bad plan the
+# rest of the file's setup is arranged to avoid.
 my $pid = fork;
-if (!defined $pid) {
-	plan skip_all => "cannot fork: $!";
-}
+BAIL_OUT("cannot fork: $!") unless defined $pid;
 
 if ($pid == 0) {
 	no warnings 'exec';    # exec() does not return when it works

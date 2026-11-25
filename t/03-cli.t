@@ -2,13 +2,16 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 
 # The commands talk to a backend over a unix socket in an owner-only directory,
-# which Win32 does not have.
+# so what this file needs is a perl that can make the socket, which is asked of
+# the module rather than assumed from the operating system's name.
 BEGIN {
 	plan skip_all => 'the command line admin talks to a backend over a unix '
-		. "socket, which MSWin32 does not have"
-		if $^O eq 'MSWin32';
+		. 'socket, and this perl has no unix domain sockets '
+		. '(Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 use File::Temp qw(tempdir);

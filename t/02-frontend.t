@@ -2,14 +2,16 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 
 # A backend is reached over a unix socket in a directory only its owner can
-# write to.  Win32 has neither, so there is nothing here to test; skipping says
-# so in the test output rather than failing for lack of a platform.
+# write to.  What this file needs is a perl that can make the socket, which is
+# asked of the module rather than assumed from the operating system's name, so
+# a perl without them is skipped wherever it runs.
 BEGIN {
-	plan skip_all => 'Class::Shared serves over a unix socket in an owner-only '
-		. "directory, which MSWin32 does not have"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'the frontend here talks to a backend over a unix socket, '
+		. 'and this perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 use File::Temp qw(tempdir);
@@ -17,7 +19,6 @@ use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 use lib 't/lib';
 
-use Class::Shared ();
 use Class::Shared::Frontend;
 use Class::Shared::Backend ();
 use Class::Shared::Protocol;

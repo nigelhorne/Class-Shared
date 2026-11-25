@@ -2,15 +2,16 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 
 # Two frontends starting at the same moment in one directory race for the spawn
 # lock and for the socket that now has to be shared between classes.  That path
-# needs a unix socket in an owner-only directory, and fork() to set the race up,
-# neither of which MSWin32 offers.
+# needs fork() to set the race up and a unix socket in an owner-only directory,
+# so a perl that cannot make the socket is skipped wherever it runs.
 BEGIN {
-	plan skip_all => 'this races fork()ed frontends over a unix socket in an '
-		. "owner-only directory, neither of which MSWin32 offers"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'this races fork()ed frontends over a unix socket, and '
+		. 'this perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 use File::Temp qw(tempdir);
@@ -19,52 +20,64 @@ use lib 't/lib';
 
 use Class::Shared::Frontend;
 
-my $dir = tempdir(CLEANUP => 1);
+# Whether this file can run at all, and the race it sets up, are settled here,
+# at compile time, before a test is output: a skip_all after tests have run is
+# a plan for zero tests, which TAP reads as a bad plan, so no test ever added
+# above a skip can be allowed to make one.  The children are forked here too,
+# so the fork that could fail cannot come after a test either; each one writes
+# its report and _exit()s inside this block, so it never returns to run the
+# parent's half of the file.
+our ($dir, $reader, $writer, @kids);
 
-# Different classes, so whichever frontend wins the lock, the other has to be
-# given the backend that is already there with a class loaded it did not ask
-# for; both are released by the same byte, so they reach the lock together.
-my @runners = (
-	{ name => 'counter', class => 'Shared::Counter', start => 5, method => 'value' },
-	{ name => 'tally',   class => 'Shared::Tally',   start => 7, method => 'total' },
-);
+BEGIN {
+	$dir = tempdir(CLEANUP => 1);
 
-pipe(my $reader, my $writer) or plan skip_all => "cannot create a pipe: $!";
+	# Different classes, so whichever frontend wins the lock, the other has to
+	# be given the backend that is already there with a class loaded it did not
+	# ask for; both are released by the same byte, so they reach the lock
+	# together.
+	my @runners = (
+		{ name => 'counter', class => 'Shared::Counter', start => 5, method => 'value' },
+		{ name => 'tally',   class => 'Shared::Tally',   start => 7, method => 'total' },
+	);
 
-my @kids;
-for my $runner (@runners) {
-	my $pid = fork;
-	plan skip_all => "cannot fork: $!" unless defined $pid;
+	pipe($reader, $writer) or plan skip_all => "cannot create a pipe: $!";
 
-	if (!$pid) {
-		close $writer;
+	for my $runner (@runners) {
+		my $pid = fork;
+		plan skip_all => "cannot fork: $!" unless defined $pid;
 
-		# The starting gun: read returns when the parent closes the write end.
-		my $go;
-		sysread($reader, $go, 1);
-		close $reader;
+		if (!$pid) {
+			close $writer;
 
-		my $report = eval {
-			my $frontend = Class::Shared::Frontend->new(
-				$runner->{class},
-				ctor => [start => $runner->{start}],
-				dir  => $dir,
-			);
+			# The starting gun: read returns when the parent closes the write
+			# end.
+			my $go;
+			sysread($reader, $go, 1);
+			close $reader;
 
-			my $method = $runner->{method};
+			my $report = eval {
+				my $frontend = Class::Shared::Frontend->new(
+					$runner->{class},
+					ctor => [start => $runner->{start}],
+					dir  => $dir,
+				);
 
-			join ' ', $frontend->shared_pid, $frontend->$method;
-		};
+				my $method = $runner->{method};
 
-		open(my $out, '>', "$dir/$runner->{name}.out") or POSIX::_exit(3);
-		print {$out} defined $report ? "$report\n" : "ERROR: $@";
-		close $out;
+				join ' ', $frontend->shared_pid, $frontend->$method;
+			};
 
-		# _exit, so Test::More's END block does not run in the child.
-		POSIX::_exit(defined $report ? 0 : 1);
+			open(my $out, '>', "$dir/$runner->{name}.out") or POSIX::_exit(3);
+			print {$out} defined $report ? "$report\n" : "ERROR: $@";
+			close $out;
+
+			# _exit, so Test::More's END block does not run in the child.
+			POSIX::_exit(defined $report ? 0 : 1);
+		}
+
+		push @kids, { %{$runner}, pid => $pid };
 	}
-
-	push @kids, { %{$runner}, pid => $pid };
 }
 
 close $writer;

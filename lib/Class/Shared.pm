@@ -6,7 +6,7 @@ use warnings;
 use File::Basename ();
 use File::Spec ();
 
-our $VERSION = '0.01';
+our $VERSION = '0.001.0';
 
 # Bumped whenever the wire protocol changes in an incompatible way.  2 added
 # the HMAC-SHA-256 digest every frame carries when a token is in use.
@@ -227,11 +227,11 @@ Class::Shared - keep one instance of a class and let other processes call it
 
     use Class::Shared::Frontend;
 
-    my $simple = Class::Shared::Frontend->new('Class::Simple',
-        ctor => [ verbose => 1 ],          # arguments for Class::Simple->new
-    );
+    my $simple = Class::Shared::Frontend->new('Class::Simple');
 
-    $simple->do_something($argument);      # runs in the shared backend
+    $simple->foo('hello');      # runs in the shared backend
+
+    print $simple->foo(), "\n";	# Prints "hello"
 
 =head1 DESCRIPTION
 

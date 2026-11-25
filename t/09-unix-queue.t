@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 
 # t/04 covers the reply queue over TLS.  The unix socket takes a different path
 # into the same code -- it is made non-blocking in _accept rather than in
@@ -22,9 +23,9 @@ use Test::More;
 #   5. within max_queued and read slowly but steadily for longer than
 #      write_timeout: the whole reply arrives and the connection is kept.
 BEGIN {
-	plan skip_all => 'this uses a unix socket in an owner-only directory, '
-		. "which MSWin32 does not have"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'this exercises the reply queue over a unix socket, and '
+		. 'this perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
 }
 
 use File::Spec ();
@@ -35,7 +36,6 @@ use Socket qw(SOCK_STREAM);
 use Time::HiRes ();
 use lib 't/lib';
 
-use Class::Shared ();
 use Class::Shared::Backend ();
 use Class::Shared::Protocol ();
 

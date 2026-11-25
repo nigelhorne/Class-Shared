@@ -24,21 +24,23 @@ is($@, '', 'a perl that has them is not refused');
 # the sockets sees is the explanation rather than "writable by group or others".
 # The probe's answer is forced through its cache, so this runs the same way
 # everywhere: what is tested is the wiring, not whether this machine happens to
-# be the one without the sockets.
+# be the one without the sockets.  What the explanation says is checked above;
+# here each call has to name itself, which is the only thing that tells the two
+# of them apart.
 {
 	local $Class::Shared::UNIX_SOCKETS = 0;
 
-	for my $attempt (
-		['ensure_dir', sub { Class::Shared::ensure_dir(tempdir(CLEANUP => 1)) }],
-		['socket_path', sub { Class::Shared::socket_path(tempdir(CLEANUP => 1)) }],
+	my $dir = tempdir(CLEANUP => 1);
+
+	for my $call (
+		['a backend directory', sub { Class::Shared::ensure_dir($dir) }],
+		['a unix socket',       sub { Class::Shared::socket_path($dir) }],
 	) {
-		my ($name, $code) = @{$attempt};
+		my ($what, $code) = @{$call};
 
-		my $returned = eval { $code->(); 1 };
+		eval { $code->(); 1 };
 
-		like($@, qr/no unix domain sockets/, "$name refuses a perl without them");
-		like($@, qr/PLATFORMS/, "and $name points at the section that explains it");
-		ok(!$returned, "and $name does not pretend to work");
+		like($@, qr/\Q$what\E is not available here/, "$what is refused, not misreported");
 	}
 }
 

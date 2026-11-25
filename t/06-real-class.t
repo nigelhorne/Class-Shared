@@ -2,13 +2,25 @@ use strict;
 use warnings;
 
 use Test::More;
+use Class::Shared ();
 
 # The frontend reaches its backend over a unix socket in an owner-only
-# directory, which Win32 does not have.
+# directory.  The class it shares is a real module that has to be installed,
+# and there is nothing to test without it.
+#
+# Both answers are worked out here, at compile time, before a test is output: a
+# skip_all after tests have run is a plan for zero tests, which TAP reads as a
+# bad plan, so no test ever added above a skip can be allowed to make one.
+# Whether the socket can exist is asked of the module rather than assumed from
+# the operating system's name, so a perl without them is skipped wherever it
+# runs.
 BEGIN {
-	plan skip_all => 'a backend here is reached over a unix socket in an '
-		. "owner-only directory, which MSWin32 does not have"
-		if $^O eq 'MSWin32';
+	plan skip_all => 'a backend here is reached over a unix socket, and this '
+		. 'perl has no unix domain sockets (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets();
+
+	eval { require Lingua::Conjunction; 1 }
+		or plan skip_all => 'Lingua::Conjunction is not installed';
 }
 
 use File::Temp qw(tempdir);
@@ -19,9 +31,6 @@ use Class::Shared::Frontend;
 # Everything else in the suite shares Shared::Counter, which the backend has
 # never heard of either, but this one shares a real module: the backend has to
 # load Lingua::Conjunction from the installed tree and run its code.
-plan skip_all => 'Lingua::Conjunction is not installed'
-	unless eval { require Lingua::Conjunction; 1 };
-
 my $dir = tempdir(CLEANUP => 1);
 
 my $english = Class::Shared::Frontend->new(

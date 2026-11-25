@@ -5,7 +5,7 @@ use warnings;
 
 use Storable ();
 
-our $VERSION = '0.01';
+our $VERSION = '0.001.0';
 
 # Requests and responses are a 4 byte network order length followed by a
 # Storable image of a hashref.  One frame in flight per connection.
