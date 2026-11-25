@@ -34,6 +34,13 @@ Revision history for Class-Shared
           SYNOPSIS with several usage patterns, an API SPECIFICATION for each
           function and method, ENCODING, COMMON PITFALLS, a FORMAL
           SPECIFICATION in Z and a STATE DIAGRAM.
+        - Class::Shared::Backend->new now uses Params::Get (new(%o) or
+          new(\%o)), Params::Validate::Strict (every option is type and
+          range checked, and an unknown option is an error) and
+          Object::Configure (site defaults from Class__Shared__Backend__NAME
+          environment variables and from class-shared-backend.yml).  What the
+          caller passes always wins.  New dependencies: Object::Configure,
+          Params::Get, Params::Validate::Strict.
         - Class::Shared::Backend's default max_clients is now 128, as its POD
           has always said (the code used 512).
         - Class::Shared::Frontend: shared_status is documented with the keys

@@ -11,6 +11,10 @@ use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 use Time::HiRes ();
 
+use Object::Configure ();
+use Params::Get ();
+use Params::Validate::Strict ();
+
 use Class::Shared ();
 use Class::Shared::Protocol ();
 
@@ -57,18 +61,54 @@ our $WRITE_TIMEOUT = 30;
 # What a connection is told when it asks for an object before naming a class.
 our $NO_CLASS_ERROR = 'this connection named no class in its handshake';
 
+# What each option to new() may be.  The checks here are the ones that do not
+# depend on another option; the rules that do ("a TCP listener needs a token")
+# stay in new(), where they can explain themselves.  An empty token or TLS file
+# name is allowed on purpose, so that those rules, not a type error, are what the
+# caller reads.  A token is limited to printable ASCII because it is turned into
+# an HMAC key as bytes (see "ENCODING" in the POD).
+my %OPTION_SCHEMA = (
+	socket            => { type => 'string',  optional => 1, min => 1 },
+	dir               => { type => 'string',  optional => 1, min => 1 },
+	host              => { type => 'string',  optional => 1, min => 1 },
+	port              => { type => 'integer', optional => 1, min => 1, max => 65535 },
+	tls_cert          => { type => 'string',  optional => 1 },
+	tls_key           => { type => 'string',  optional => 1 },
+	tls_ca            => { type => 'string',  optional => 1 },
+	token             => { type => 'string',  optional => 1, matches => qr/\A[\x20-\x7E]*\z/ },
+	log               => { type => 'string',  optional => 1, min => 1 },
+	daemonize         => { type => 'boolean', optional => 1 },
+	max_clients       => { type => 'integer', optional => 1, min => 1 },
+	max_objects       => { type => 'integer', optional => 1, min => 1 },
+	max_queued        => { type => 'integer', optional => 1, min => 1 },
+	max_queued_total  => { type => 'integer', optional => 1, min => 1 },
+	write_timeout     => { type => 'number',  optional => 1, min => 0 },
+	handshake_timeout => { type => 'number',  optional => 1, min => 0 },
+	start_timeout     => { type => 'number',  optional => 1, min => 0 },
+
+	# Not options of the backend: they say where to look for site settings.
+	config_file       => { type => 'string',   optional => 1, min => 1 },
+	config_dirs       => { type => 'arrayref', optional => 1 },
+);
+
+# The two entries above that only locate settings, and so are never kept.
+my %LOCATES_SETTINGS = (config_file => 1, config_dirs => 1);
+
 # The backend loads each class a client names, once, and holds many objects
 # made from them: one per frontend.  Clients talk to it over a unix socket or
 # TCP.
 sub new {
-	my ($class, %opt) = @_;
+	my $class = shift;
+
+	# new(%options) and new(\%options) are both fine, and so is new().
+	my %opt = %{ _options($class, Params::Get::get_params(undef, \@_)) };
 
 	my ($host, $port, $socket) = @opt{qw(host port socket)};
 
 	if (defined $host || defined $port) {
-		die "Class::Shared::Backend->new: a TCP listener needs both host and port\n"
+		die __PACKAGE__, "->new: a TCP listener needs both host and port\n"
 			unless defined $host && defined $port;
-		die "Class::Shared::Backend->new: use either socket or host/port, not both\n"
+		die __PACKAGE__, "->new: use either socket or host/port, not both\n"
 			if defined $socket;
 
 		# A TCP port is reachable by anybody who can route to it, and thawing
@@ -160,6 +200,81 @@ sub new {
 	}, $class;
 
 	return $self;
+}
+
+# Purpose:       work out the options for one backend from three places, in
+#                this order of importance: what the caller passed, then the
+#                environment (Class__Shared__Backend__NAME), then a config file
+#                (class-shared-backend.yml).  The caller always wins, so a
+#                stray variable in the environment cannot override a token or a
+#                certificate that the program chose.
+# Entry:         $class is the class being built; $given is a hash reference
+#                of the caller's arguments, or undef if there were none.
+# Exit status:   a hash reference of valid options (only those that were set);
+#                dies with "Class::Shared::Backend->new: ..." if an argument
+#                or a configured value is unknown or has the wrong type.
+# Side effects:  reads config files and the environment.
+sub _options {
+	my ($class, $given) = @_;
+
+	# What the caller passed is checked first, so that a misspelt name is
+	# reported as theirs, and not lost among the site settings.
+	my $explicit = _validate($given || {}, 'an argument');
+
+	# undef means "not given", which is how bin/class-shared passes an option
+	# it has nothing for; it must not hide a site setting.
+	delete @{$explicit}{ grep { !defined $explicit->{$_} } keys %{$explicit} };
+
+	# Object::Configure gives the caller's values the LOWEST priority and adds
+	# keys of its own (a logger, the config path).  So it is given only the
+	# place to look, and only the options this class knows are taken back.
+	# The backend writes its own log, so no logger is wanted from it.
+	my $configured = Object::Configure::configure($class, {
+		logger => 'NULL',
+		map { $_ => $explicit->{$_} } grep { exists $explicit->{$_} } keys %LOCATES_SETTINGS,
+	});
+
+	my %site = map { $_ => $configured->{$_} }
+		grep { defined $configured->{$_} && !$LOCATES_SETTINGS{$_} }
+		keys %OPTION_SCHEMA;
+
+	# Values from a file or the environment arrive as text, so they are checked
+	# (and turned into numbers) in the same way as the caller's.
+	my $site = _validate(\%site, 'a configured value');
+
+	my %kept = map { $_ => $explicit->{$_} } grep { !$LOCATES_SETTINGS{$_} } keys %{$explicit};
+
+	return { %{$site}, %kept };
+}
+
+# Purpose:       check one set of options against %OPTION_SCHEMA.
+# Entry:         $input is a hash reference; $source says where it came from, for
+#                the message ("an argument", "a configured value").
+# Exit status:   the validated hash reference (numbers and booleans coerced);
+#                dies with a message in this module's usual form if not.
+# Side effects:  none.
+sub _validate {
+	my ($input, $source) = @_;
+
+	my $valid = eval {
+		Params::Validate::Strict::validate_strict(
+			schema => \%OPTION_SCHEMA,
+			input  => $input,
+		);
+	};
+
+	if (!$valid) {
+		# The validator names its own source line and ours; neither helps a
+		# person, who needs to know which option and what was wrong with it.
+		my $why = $@ || 'invalid options';
+		$why =~ s/\AParams::Validate::Strict line \d+: validate_strict: //;
+		$why =~ s/ at \S+ line \d+\.?\s*\z//;
+		$why =~ s/\s+\z//;
+
+		die "Class::Shared::Backend->new: $source is not valid: $why\n";
+	}
+
+	return $valid;
 }
 
 sub run {
@@ -1208,6 +1323,11 @@ from the shell.
         max_objects => 200,
     )->run;
 
+    # 6. Take site settings from a file or the environment, with no change to
+    #    the program.  See "CONFIGURATION".
+    #      export Class__Shared__Backend__max_clients=50
+    Class::Shared::Backend->new(config_file => '/etc/class-shared/backend.yml')->run;
+
 =head1 DESCRIPTION
 
 A client names the class it wants in its first message, the handshake, and the
@@ -1226,6 +1346,10 @@ There is no class option: which classes are loaded is decided by the clients,
 not by the command line.
 
 =head1 OPTIONS
+
+Every option may also be given as a site default; see L</CONFIGURATION>.  An
+option you pass with the value C<undef> counts as not given.  A name that is not
+listed here makes C<new> die.
 
 =over 4
 
@@ -1335,6 +1459,16 @@ Seconds a TCP connection may spend on its TLS handshake before it is dropped
 and its slot freed.  Default 5.  Nothing else is bounded by it: a client that
 has finished its handshake may sit idle for as long as it likes.
 
+=item config_file
+
+The path of a configuration file to read site settings from.  It is not an
+option of the backend itself and is not kept.  See L</CONFIGURATION>.
+
+=item config_dirs
+
+An array reference of directories to search for the configuration file when
+C<config_file> is a bare file name.  Not kept either.
+
 =back
 
 =head1 METHODS
@@ -1350,7 +1484,13 @@ modules, and this distribution does not depend on them.
 
 Checks the options and returns a backend that is ready to run.  It does not
 open a socket, take a lock or start anything: that happens in L</run>.  Every
-option is described in L</OPTIONS>.
+option is described in L</OPTIONS>.  You may pass the options as a list of pairs
+or as one hash reference.
+
+The options come from three places.  What you pass always wins.  What you do not
+pass is taken from the environment, and then from a configuration file, as
+L</CONFIGURATION> describes.  Whatever the source, each value is checked the same
+way.
 
 Choose one transport.  With neither C<host> nor C<port> you get a unix socket
 (C<socket>, or the default path).  With C<host> and C<port> you get TCP over
@@ -1358,9 +1498,13 @@ TLS, which also needs C<tls_cert>, C<tls_key>, C<tls_ca> and C<token>.  A unix
 socket refuses a token and TLS files, because its permissions already decide
 who may connect.
 
-B<Side effects:> none, other than building the object.
+B<Side effects:> reads the environment and, if there is one, a configuration
+file.  It builds the object and nothing else.
 
-B<Dies> if the options are inconsistent: only one of C<host> and C<port>;
+B<Dies> if an option name is not known or a value has the wrong type or is out
+of range (for example a C<port> that is not a whole number from 1 to 65535).
+The message says whether the bad value was an argument or a configured value,
+and names the option.  It also dies if the options are inconsistent: only one of C<host> and C<port>;
 C<socket> together with C<host>/C<port>; a TCP listener without a token or
 without all three TLS files; a unix socket with a token or TLS files; or an
 over-long socket path.  (A perl without unix sockets is reported by C<run>, or
@@ -1378,7 +1522,7 @@ by C<new> when it has to work out the default socket path.)
         tls_cert          => { type => 'string',  optional => 1, min => 1 },
         tls_key           => { type => 'string',  optional => 1, min => 1 },
         tls_ca            => { type => 'string',  optional => 1, min => 1 },
-        token             => { type => 'string',  optional => 1, matches => qr/\A[\x20-\x7E]+\z/ },
+        token             => { type => 'string',  optional => 1, matches => qr/\A[\x20-\x7E]*\z/ },
         log               => { type => 'string',  optional => 1, min => 1 },
         daemonize         => { type => 'boolean', optional => 1 },
         max_clients       => { type => 'integer', optional => 1, min => 1 },
@@ -1388,6 +1532,8 @@ by C<new> when it has to work out the default socket path.)
         write_timeout     => { type => 'number',  optional => 1, min => 0 },
         handshake_timeout => { type => 'number',  optional => 1, min => 0 },
         start_timeout     => { type => 'number',  optional => 1, min => 0 },
+        config_file       => { type => 'string',   optional => 1, min => 1 },
+        config_dirs       => { type => 'arrayref', optional => 1 },
     }
 
 =head4 Output
@@ -1471,6 +1617,63 @@ Called by Perl when the backend object goes away.  It removes the socket file,
 but only if this object created it.  A backend that failed to start because
 another one was already serving never owned the socket, so it leaves the other
 backend's socket alone.  You do not call it yourself.
+
+=head1 CONFIGURATION
+
+A backend can take its options from outside the program, so that whoever runs
+it can change them without editing code.  This is done with
+L<Object::Configure>.  The same option can come from three places.  The first
+one that has a value wins:
+
+=over 4
+
+=item 1.
+
+what you passed to C<new>;
+
+=item 2.
+
+an environment variable named C<Class__Shared__Backend__OPTION>, for example
+C<Class__Shared__Backend__max_clients=50>;
+
+=item 3.
+
+a configuration file.
+
+=back
+
+This is the opposite of L<Object::Configure>'s own default, in which the program's
+values have the lowest priority.  It is reversed here on purpose.  The backend
+holds a secret (C<token>) and the names of the certificates it trusts, and a
+stray variable in the environment must not be able to replace what the program
+chose.  A value you do not pass is the place where a site default is welcome.
+
+The file is named after the class, in lower case, with C<::> turned into C<->:
+F<class-shared-backend.yml>.  (JSON and the other formats that
+L<Config::Abstraction> reads work too.)  It is looked for in the directory of
+C<config_file>, then in each directory of C<config_dirs>.  Inside, the settings
+sit under a key that has C<__> where the class name has C<::>:
+
+    ---
+    Class__Shared__Backend:
+        max_clients: 50
+        max_objects: 1000
+        log: /var/log/class-shared.log
+
+Only the options listed in L</OPTIONS> are taken from the file or the
+environment.  Other keys are ignored, because the same file may hold settings for
+other classes.  Each value is checked as strictly as an argument would be, and a
+bad one is reported as "a configured value is not valid".  The rules between
+options still apply: a C<token> in the environment is refused for a unix socket,
+just as one passed in code is.
+
+Treat these places as you would treat the program.  A token or a certificate
+path set in a file or in the environment can be read by anybody who can read
+that file or that process's environment.  Keep the file mode 0600 and prefer
+C<token_file> in L<class-shared> to putting a secret in a variable.
+
+A backend that a frontend starts for you inherits the environment of that
+frontend, so these variables apply to it too.
 
 =head1 SINGLETON
 
@@ -1685,7 +1888,8 @@ underscores, with C<::> between words, are accepted.
 
 The digest is worked out by L<Digest::SHA> on bytes.  A character above code
 point 255 stops it from working, and a character from 128 to 255 gives a
-different answer as a Perl string than as the bytes of a file.  Use ASCII.
+different answer as a Perl string than as the bytes of a file.  So C<new> accepts
+only printable ASCII (space to C<~>) in a token and refuses anything else.
 
 =item Paths: ASCII is safest.
 
@@ -1723,6 +1927,27 @@ It runs the server loop for as long as the backend lives.
 
 There is no C<class> option.  The class must be findable in the C<@INC> that the
 backend was started with, so start it with the right C<-I> or C<PERL5LIB>.
+
+=item A misspelt option is an error.
+
+C<new> dies on a name it does not know, as C<Class::Shared::Frontend> does.
+This includes C<class>, which was never an option: the clients choose the class.
+
+=item Environment variables and files can change what you did not pass.
+
+If your program leaves C<max_clients> out, C<Class__Shared__Backend__max_clients>
+in the environment sets it.  To be sure of a value, pass it.  A bad value in the
+environment stops the backend from starting, and the message says it came from
+configuration.
+
+=item The configuration file is looked up once per process.
+
+L<Object::Configure> remembers where it found the file for a class.  Changing
+C<config_file> later in the same process may not be noticed.
+
+=item Loading the configuration modules costs a little start-up time.
+
+Roughly 0.1 seconds, which matters only if you start a backend very often.
 
 =item The backend keeps the environment it was started with.
 
@@ -1774,7 +1999,8 @@ variables.  Keep state in the object.
 =head1 SEE ALSO
 
 L<Class::Shared>, L<Class::Shared::Frontend>, L<Class::Shared::Protocol>,
-L<class-shared>.
+L<class-shared>, L<Object::Configure>, L<Params::Get>,
+L<Params::Validate::Strict>.
 
 =head1 AUTHOR
 
@@ -1817,13 +2043,20 @@ C<objects> (the ids it made), C<buffer> and C<outbuf> (bytes), and C<closed>.
 =head2 new
 
     ┌─ New ───────────────────────────────────────────────────
-    │ opts? : OPTIONS ; out! : RESULT[Backend]
+    │ args?, env, file : NAME ⇸ VALUE ; out! : RESULT[Backend]
+    │ opts == (file ⊕ env) ⊕ args?            the caller's arguments win, then env, then file
     ├─────────────────────────────────────────────────────────
+    │ dom args? ⊄ OPTIONS ∨ ¬ valid(args?)    ⇒ ∃ m • out! = dies(m)
+    │ ¬ valid(opts ∖ dom args?)               ⇒ ∃ m • out! = dies(m)   a configured value
+    │ otherwise, with opts as below:
     │ host? = ⊥ ∧ port? = ⊥ ∧ no token ∧ no tls_*  ∧ #socket ≤ 100  ⇒ out! = value(b) ∧ b is idle
     │ host? ≠ ⊥ ∧ port? ≠ ⊥ ∧ socket? = ⊥ ∧ token ≠ ⊥ ∧ tls_cert, tls_key, tls_ca ≠ ⊥
     │                                                    ⇒ out! = value(b) ∧ b is idle
     │ any other combination ⇒ ∃ m • out! = dies(m)
     └─────────────────────────────────────────────────────────
+
+where an option whose value is ⊥ counts as absent from C<args?>, and C<valid>
+means every named option exists and its value has the right type and range.
 
 =head2 run
 

@@ -22,6 +22,7 @@ t/07-platform.t
 t/08-concurrent-spawn.t
 t/09-unix-queue.t
 t/10-regressions.t
+t/11-backend-options.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem

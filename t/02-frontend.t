@@ -213,7 +213,6 @@ is(wait_for_objects($first, 1), 1, 'destroying a frontend destroys its object');
 # The singleton itself: a second backend for the same class must refuse.
 {
 	my $intruder = Class::Shared::Backend->new(
-		class         => 'Shared::Counter',
 		dir           => $dir,
 		start_timeout => 0.2,
 	);
