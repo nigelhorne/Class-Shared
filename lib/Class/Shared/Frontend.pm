@@ -1305,7 +1305,7 @@ C<port>.  Remove them: a unix socket does not use them.
 =item C<Class::Shared: cannot reach a backend at ADDRESS: REASON>
 
 Nothing is listening and a backend was not started, because C<autostart> is off
-or the backend is on TCP.  Start the backend with C<class-shared serve>.
+or the backend is on TCP.  Start the backend with C<class-shared start>.
 
 =item C<Class::Shared: could not start a backend: REASON (socket PATH, log PATH)>
 

@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use File::Spec ();
 use File::Temp qw(tempdir);
 
 use Class::Shared::Backend ();
@@ -41,7 +42,10 @@ sub refused {
 			unless Class::Shared::_has_unix_sockets();
 
 		my $none = Class::Shared::Backend->new();
-		is($none->{socket}, "$dir/class-shared.sock", 'new() with no arguments uses the default socket');
+		# Built with File::Spec, as the module builds it: a hard-coded "/" would
+		# not match the path it returns on Windows.
+		is($none->{socket}, File::Spec->catfile($dir, 'class-shared.sock'),
+			'new() with no arguments uses the default socket');
 	}
 }
 

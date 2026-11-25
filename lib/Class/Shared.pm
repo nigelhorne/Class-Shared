@@ -311,7 +311,7 @@ Each example below is a different real-world pattern.
     );
 
     # 4. Look after the backend yourself, from the shell.
-    #      class-shared serve        # start it in the background
+    #      class-shared start        # start it in the background
     #      class-shared status       # ask what it is doing
     #      class-shared stop         # ask it to stop
 
@@ -1050,7 +1050,7 @@ another beyond this, so give each client, or each pair of them, their own.
 
 The listener is given three of the files:
 
-    class-shared serve --listen tcp:0.0.0.0:7000 \
+    class-shared start --listen tcp:0.0.0.0:7000 \
         --token-file /etc/class-shared/token \
         --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
 

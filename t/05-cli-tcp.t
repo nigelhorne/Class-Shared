@@ -98,7 +98,7 @@ BEGIN {
 	if ($pid == 0) {
 		no warnings 'exec';    # exec() does not return when it works
 		exec(
-			$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
+			$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'start',
 			'--listen', "tcp:127.0.0.1:$port",
 			'--token-file', $token_file,
 			'--tls-cert', $pem{server},

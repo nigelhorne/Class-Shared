@@ -1306,7 +1306,7 @@ Class::Shared::Backend - load a class once and serve objects made from it
 =head1 SYNOPSIS
 
 Each example is a different real-world pattern.  Most people never write this
-code: a frontend starts a backend for you, and C<class-shared serve> starts one
+code: a frontend starts a backend for you, and C<class-shared start> starts one
 from the shell.
 
     use Class::Shared::Backend;

@@ -105,7 +105,7 @@ Revision history for Class-Shared
         - Documented ctor, which the synopsis used without saying what it was:
           the array reference of arguments for the shared class's new, sent
           once, plain data only, with a dying constructor reported by new.
-        - bin/class-shared for serve, status, stop and path.  status prints the
+        - bin/class-shared for start, status, stop and path.  status prints the
           bytes queued and the ceiling they are held against, so the queue's
           memory use can be watched without a client asking for anything.
         - A total ceiling on queued replies, max_queued_total (default four

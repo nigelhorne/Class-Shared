@@ -153,4 +153,13 @@ my $help = `$cli help 2>&1`;
 is($?, 0, 'help exits successfully');
 like($help, qr/usage: class-shared/, 'help explains itself');
 
+# The command that starts a backend is "start", the opposite of "stop", as
+# with systemctl.  Its old name, "serve", is not kept as an alias.
+like($help, qr/^  start +run the backend/m, 'help lists start as the command that runs the backend');
+unlike($help, qr/^  serve /m, 'and no longer lists serve');
+
+my $old = `$cli serve --dir $dir 2>&1`;
+is($? >> 8, 2, 'serve is now an unknown command: usage error');
+like($old, qr/unknown command 'serve'/, 'and says so');
+
 done_testing();

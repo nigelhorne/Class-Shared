@@ -61,8 +61,8 @@ if ($opt{help} || $command eq 'help') {
 	usage(0);
 }
 
-if ($command eq 'serve') {
-	serve();
+if ($command eq 'start') {
+	start();
 } elsif ($command eq 'status') {
 	status();
 } elsif ($command eq 'stop') {
@@ -79,7 +79,7 @@ exit 0;
 
 # ---------------------------------------------------------------- commands
 
-sub serve {
+sub start {
 	my ($host, $port) = tcp_endpoint();
 
 	eval { require Class::Shared::Backend; 1 }
@@ -431,7 +431,7 @@ sub usage {
 usage: $program <command> [options]
 
 Commands:
-  serve     run the backend (in the background unless -f)
+  start     run the backend (in the background unless -f)
   status    ask a running backend what it is doing
   stop      ask a running backend to shut down, destroying its objects
   path      print the unix socket path
@@ -452,14 +452,14 @@ Options:
                    pin the backend's SHA-256 fingerprint instead of a CA; the
                    client commands only
   --log PATH       backend log file (default: SOCKET.log)
-  -f, --foreground stay in the foreground (serve)
+  -f, --foreground stay in the foreground (start)
   -h, --help       this message
   -V, --version    print the version
 
 Examples:
-  $program serve  -f
+  $program start  -f
   $program status
-  $program serve  --listen tcp:0.0.0.0:7000 \\
+  $program start  --listen tcp:0.0.0.0:7000 \\
                   --token-file /etc/class-shared/token \\
                   --tls-cert /etc/class-shared/server.pem \\
                   --tls-key /etc/class-shared/server-key.pem \\
@@ -479,8 +479,8 @@ class-shared - start, inspect and stop a Class::Shared backend
 
 =head1 SYNOPSIS
 
-    class-shared serve  [-f] [--dir DIR | --socket PATH]
-    class-shared serve  --listen tcp:HOST:PORT \
+    class-shared start  [-f] [--dir DIR | --socket PATH]
+    class-shared start  --listen tcp:HOST:PORT \
                         --token-file FILE --tls-cert CERT --tls-key KEY \
                         --tls-ca CA
     class-shared status [--dir DIR | --socket PATH]
@@ -491,15 +491,15 @@ class-shared - start, inspect and stop a Class::Shared backend
 Real-world patterns:
 
     # 1. Start a backend for this user, then look at it, then stop it.
-    class-shared serve
+    class-shared start
     class-shared status
     class-shared stop
 
     # 2. Run it in the foreground under a supervisor (systemd, runit, ...).
-    class-shared serve -f --dir /run/myapp
+    class-shared start -f --dir /run/myapp
 
     # 3. Serve other machines over TLS, with a token.
-    class-shared serve --listen tcp:0.0.0.0:7000 \
+    class-shared start --listen tcp:0.0.0.0:7000 \
                        --token-file /etc/class-shared/token \
                        --tls-cert server.pem --tls-key server-key.pem \
                        --tls-ca clients-ca.pem
@@ -538,7 +538,7 @@ frontend will start for you.
 
 =over 4
 
-=item serve
+=item start
 
 Starts the backend and does not return until it stops.  Unless
 C<--foreground> is given it forks into the background first, so the command
@@ -620,13 +620,13 @@ and this command refuses the option for one.
 =item --tls-cert FILE, --tls-key FILE
 
 The certificate this side presents and its private key: the backend's for
-C<serve>, this client's for C<status> and C<stop>.  Both are required for TCP.
+C<start>, this client's for C<status> and C<stop>.  Both are required for TCP.
 The backend's certificate must name the address clients use, because they check
 the name as well as the chain.  See L</TLS>.
 
 =item --tls-ca FILE
 
-PEM file of the CA the other side's certificate must chain to.  For C<serve>
+PEM file of the CA the other side's certificate must chain to.  For C<start>
 that is the CA that signs clients' certificates, and a client signed by any
 other CA is dropped during the handshake; for C<status> and C<stop> it is the CA
 that signed the backend's certificate.  Required for a TCP listener, and for the
@@ -648,7 +648,7 @@ appended.
 
 =item -f, --foreground
 
-Stay in the foreground instead of forking into the background (C<serve> only).
+Stay in the foreground instead of forking into the background (C<start> only).
 Useful under a supervisor that does not want a daemon.
 
 =item -h, --help
@@ -686,7 +686,7 @@ else.  L<Class::Shared::Frontend> makes the same guess when it has no token.
 
 =head1 TLS
 
-TCP has no unencrypted mode.  C<serve> needs a certificate and key of its own
+TCP has no unencrypted mode.  C<start> needs a certificate and key of its own
 and the CA that signs its clients, and it verifies those clients mandatorily: a
 connection that presents nothing, or a certificate from another CA, is dropped
 during the handshake and logged, and never gets as far as a frame.
@@ -702,7 +702,7 @@ and asks for nothing else.
 
 0 when the command succeeded, 1 when it failed (no backend, a refused request,
 a secret that does not authenticate, a socket path that is too long, standard
-output that cannot be written) and 2 for a usage error.  A background C<serve>
+output that cannot be written) and 2 for a usage error.  A background C<start>
 exits 0 before it knows whether the backend started; see L</COMMON PITFALLS>.
 
 =head1 SEE ALSO
@@ -751,15 +751,15 @@ L<Class::Shared::Backend/ENCODING>.
 
 =over 4
 
-=item C<serve> returns before the backend is ready.
+=item C<start> returns before the backend is ready.
 
 In the background (the default) the command exits with status 0 as soon as the
 background copy has been started.  The socket may not exist for a moment.  A
-script that runs C<class-shared serve> and then at once C<class-shared status>
+script that runs C<class-shared start> and then at once C<class-shared status>
 can fail the first time.  Try C<status> again, or use C<--foreground> under a
 supervisor.
 
-=item A failed C<serve> can still exit 0.
+=item A failed C<start> can still exit 0.
 
 The background copy reports its problems to the log, after the command has
 returned.  If another backend is already serving, the new one waits about two
@@ -770,7 +770,7 @@ backend, run C<class-shared status> and read the log if it says nothing.
 =item Give the same location to every command.
 
 C<status>, C<stop> and C<path> look in the default directory unless you give the
-same C<--dir>, C<--socket> or C<--listen> that C<serve> used.  For TCP they also
+same C<--dir>, C<--socket> or C<--listen> that C<start> used.  For TCP they also
 need the matching C<--tls-*> options and C<--token-file>.
 
 =item C<stop> stops it for everybody.
@@ -784,7 +784,7 @@ tcp:...> (or C<--host> and C<--port>), on purpose.
 
 =item C<--tls-fingerprint> is for clients.
 
-C<serve> refuses it.  A listener checks its clients with C<--tls-ca>.
+C<start> refuses it.  A listener checks its clients with C<--tls-ca>.
 
 =item The backend finds classes in the C<@INC> it was started with.
 
@@ -812,9 +812,9 @@ plain ASCII.
     │ log      : LOCATION → seq STRING      what each location's log holds
     └─────────────────────────────────────────────────────────
 
-=head2 serve
+=head2 start
 
-    ┌─ Serve ─────────────────────────────────────────────────
+    ┌─ Start ─────────────────────────────────────────────────
     │ ΔHost ; loc? : LOCATION ; fg? : 𝔹 ; status! : {0, 1, 2}
     ├─────────────────────────────────────────────────────────
     │ options invalid ⇒ ΞHost ∧ status! = 1
@@ -860,7 +860,7 @@ plain ASCII.
 The program has no state of its own.  The state that matters is the backend's,
 and each command moves it like this.
 
-                 serve                                   stop
+                 start                                   stop
         (exits 0 at once; the backend       (objects destroyed, socket
          starts a moment later)              and pid file removed)
 
@@ -869,8 +869,8 @@ and each command moves it like this.
     +------------+                        +---------+                       +------------+
                                             |     ^
                                             +-----+
-                          status, path, or a second serve: no change.
-                          (The second serve's copy waits about 2 seconds,
+                          status, path, or a second start: no change.
+                          (The second start's copy waits about 2 seconds,
                           logs "another backend is already serving" and
                           exits 1.  The shell has already seen 0.)
 
@@ -878,7 +878,7 @@ and each command moves it like this.
 
 =item NO BACKEND to RUNNING
 
-Trigger: C<serve>.  Action: the command forks, the first process exits 0, and the
+Trigger: C<start>.  Action: the command forks, the first process exits 0, and the
 background copy takes the lock, opens the socket and starts serving.
 
 =item RUNNING to NO BACKEND
@@ -889,7 +889,7 @@ to disappear.
 
 =item RUNNING to RUNNING
 
-Trigger: C<status> or C<path> (they change nothing), or a second C<serve>
+Trigger: C<status> or C<path> (they change nothing), or a second C<start>
 (which fails in the background and changes nothing).
 
 =item NO BACKEND, a command that needs one

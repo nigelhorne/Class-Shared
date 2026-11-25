@@ -86,7 +86,7 @@ BEGIN {
 }
 
 my $tls = "--tls-cert $pem{server} --tls-key $pem{'server-key'} --tls-ca $pem{ca}";
-my $base = "$^X -Ilib -It/lib bin/class-shared serve "
+my $base = "$^X -Ilib -It/lib bin/class-shared start "
 	. "--listen tcp:127.0.0.1:$port --dir $dir -f";
 
 # A port anybody can route to must not be a port where a stranger's bytes reach
@@ -137,7 +137,7 @@ BAIL_OUT("cannot fork: $!") unless defined $pid;
 if ($pid == 0) {
 	no warnings 'exec';    # exec() does not return when it works
 	exec(
-		$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'serve',
+		$^X, '-Ilib', '-It/lib', 'bin/class-shared', 'start',
 		'--listen', "tcp:127.0.0.1:$port",
 		'--token-file', $token_file,
 		'--tls-cert', $pem{server},

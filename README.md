@@ -36,7 +36,7 @@ my $remote = Class::Shared::Frontend->new('Class::Simple',
 );
 
 # 4. Look after the backend yourself, from the shell.
-#      class-shared serve        # start it in the background
+#      class-shared start        # start it in the background
 #      class-shared status       # ask what it is doing
 #      class-shared stop         # ask it to stop
 
@@ -805,7 +805,7 @@ openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
 The listener is given three of the files:
 
 ```
-class-shared serve --listen tcp:0.0.0.0:7000 \
+class-shared start --listen tcp:0.0.0.0:7000 \
     --token-file /etc/class-shared/token \
     --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
 ```

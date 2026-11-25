@@ -107,7 +107,12 @@ sub backend {
 
 # The pid is in each line, so a backend that forks (as it does to detach) must
 # not go on writing the parent's pid.
-{
+SKIP: {
+	# Where fork is emulated with threads (Windows) the child shares this
+	# process, so ending it with _exit would end the whole test.
+	skip 'fork is emulated here, so there is no second process to name', 2
+		if $^O eq 'MSWin32';
+
 	my $b = backend('forked');
 
 	$b->_log('before');
