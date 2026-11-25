@@ -8,6 +8,7 @@ use File::Spec ();
 use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
+use Time::HiRes ();
 
 use Class::Shared ();
 use Class::Shared::Protocol ();
@@ -29,6 +30,13 @@ our $HANDSHAKE_TIMEOUT = 5;
 # The default is one maximum-size frame, so no reply the protocol allows is
 # refused for being large.
 our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
+
+# max_queued bounds how much one client may have waiting; this bounds how long
+# it may have it there.  A stalled queue that the socket will not take is a
+# client that has stopped reading, and holding its memory for ever is what the
+# bound alone allows.  The clock is fractional, so a slow reader that keeps
+# taking bytes is not dropped early by the second hand.
+our $WRITE_TIMEOUT = 30;
 
 # The backend loads each class a client names, once, and holds many objects
 # made from them: one per frontend.  Clients talk to it over a unix socket or
@@ -79,6 +87,15 @@ sub new {
 		? $socket
 		: Class::Shared::socket_path($opt{dir});
 
+	my $max_queued = defined $opt{max_queued} ? $opt{max_queued} : $MAX_QUEUED;
+
+	# Four times one client's bound by default: enough that a few clients may
+	# each be holding a maximum-size reply, small enough that a few hundred
+	# cannot each be holding one.
+	my $max_queued_total = defined $opt{max_queued_total}
+		? $opt{max_queued_total}
+		: $max_queued * 4;
+
 	my $self = bless {
 		classes       => {},
 		socket        => $socket,
@@ -94,13 +111,18 @@ sub new {
 		daemonize     => $opt{daemonize} ? 1 : 0,
 					max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
 			max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
-			max_queued    => defined $opt{max_queued} ? $opt{max_queued} : $MAX_QUEUED,
+			max_queued    => $max_queued,
+			max_queued_total => $max_queued_total,
+			write_timeout => defined $opt{write_timeout}
+				? $opt{write_timeout}
+				: $WRITE_TIMEOUT,
 			handshake_timeout => defined $opt{handshake_timeout}
 				? $opt{handshake_timeout}
 				: $HANDSHAKE_TIMEOUT,
 		start_timeout => defined $opt{start_timeout} ? $opt{start_timeout} : 2,
 		objects       => {},
 		clients       => {},
+		queued        => 0,
 		next_id       => 1,
 		next_serial   => 1,
 		calls         => 0,
@@ -302,6 +324,7 @@ sub _loop {
 		my $rin = '';
 		my $win = '';
 		my $handshaking = 0;
+		my $write_deadline;
 
 		vec($rin, fileno($self->{listener}), 1) = 1;
 
@@ -318,17 +341,32 @@ sub _loop {
 				# full send buffer), so wait for that only when it asked.
 				vec($win, $fd, 1) = 1 if $client->{want_write};
 			} elsif (length $client->{outbuf}) {
-				# A queued reply is waiting for the socket to take it.
+				# A queued reply is waiting for the socket to take it, and has a
+				# deadline if it has made no progress yet.
 				vec($win, $fd, 1) = 1;
+
+				if (defined $client->{stalled_since}) {
+					my $deadline = $client->{stalled_since} + $self->{write_timeout};
+					$write_deadline = $deadline
+						if !defined $write_deadline || $deadline < $write_deadline;
+				}
 			}
 		}
 
-		# With a handshake in progress, wake up now and then: a peer that
-		# never speaks would otherwise keep select asleep past its deadline.
-		my $ready = select(my $rout = $rin, my $wout = $win, undef,
-			$handshaking ? 0.25 : undef);
+		# With a handshake in progress, or a queued reply on a deadline, wake up
+		# now and then: a peer that never speaks, or one that never reads, would
+		# otherwise keep select asleep past the deadline it is on.
+		my $timeout = $handshaking ? 0.25 : undef;
+		if (defined $write_deadline) {
+			my $wait = $write_deadline - Time::HiRes::time();
+			$wait = 0 if $wait < 0;
+			$timeout = $wait if !defined $timeout || $wait < $timeout;
+		}
+
+		my $ready = select(my $rout = $rin, my $wout = $win, undef, $timeout);
 
 		$self->_expire_handshakes if $handshaking;
+		$self->_expire_writes if defined $write_deadline;
 
 		next if !defined $ready || $ready <= 0;
 
@@ -375,6 +413,26 @@ sub _expire_handshakes {
 		next if $client->{deadline} > $now;
 
 		$self->_drop_client($client, 'TLS handshake timed out');
+	}
+
+	return 1;
+}
+
+# Drop connections whose queued reply the socket has stopped taking, so a
+# client that has stopped reading cannot sit on the memory it was allowed.
+sub _expire_writes {
+	my $self = shift;
+
+	my $now = Time::HiRes::time();
+
+	for my $client (values %{$self->{clients}}) {
+		next if $client->{closed};
+		next unless length $client->{outbuf};
+		next unless defined $client->{stalled_since};
+		next if $client->{stalled_since} + $self->{write_timeout} > $now;
+
+		$self->_drop_client($client, 'a queued reply of ' . length($client->{outbuf})
+			. ' bytes made no progress for ' . $self->{write_timeout} . ' second(s)');
 	}
 
 	return 1;
@@ -597,8 +655,12 @@ sub _drop_client {
 
 	# Whatever was waiting to be written goes with the connection: there is
 	# nobody left to read it.
+	$self->{queued} -= length $client->{outbuf};
+	$self->{queued} = 0 if $self->{queued} < 0;
+
 	$client->{closed} = 1;
 	$client->{outbuf} = '';
+	$client->{stalled_since} = undef;
 
 	my $owned = $client->{objects} || {};
 	for my $id (keys %{$owned}) {
@@ -636,18 +698,36 @@ sub _send {
 		}
 	}
 
-	# Measure the queue before any of this reply goes out, so the limit is on
-	# what the backend is holding for this client and not on how much of it
-	# the kernel happened to take.
-	my $queued = length($client->{outbuf}) + length($bytes);
+	# Measure the queues before any of this reply goes out, so the limits are on
+	# what the backend is holding and not on how much of it the kernel happened
+	# to take.
+	my $length = length $bytes;
+	my $queued = length($client->{outbuf}) + $length;
+
 	if ($queued > $self->{max_queued}) {
-		$self->_drop_client($client, 'a reply of ' . length($bytes)
-			. " bytes leaves $queued waiting to be written, more than the "
-			. "$self->{max_queued} a client may hold");
+		$self->_drop_client($client, "a reply of $length bytes leaves $queued "
+			. "waiting to be written, more than the $self->{max_queued} a client may hold");
+		return;
+	}
+
+	# One client's bound is not the process's: a few hundred clients that each
+	# stay under max_queued would still add up to more memory than there is.
+	if ($self->{queued} + $length > $self->{max_queued_total}) {
+		$self->_drop_client($client, "a reply of $length bytes would leave "
+			. ($self->{queued} + $length) . ' queued across all clients, more than '
+			. "the $self->{max_queued_total} the backend may hold");
 		return;
 	}
 
 	$client->{outbuf} .= $bytes;
+	$self->{queued} += $length;
+
+	# The queue has a deadline from now: it is pushed forward by every write
+	# that takes some of it and cleared when the queue empties.  Waiting for
+	# writability alone would never notice a socket that never becomes
+	# writable again.
+	$client->{stalled_since} = Time::HiRes::time()
+		unless defined $client->{stalled_since};
 
 	$self->_flush($client);
 
@@ -668,7 +748,14 @@ sub _flush {
 	my $written = syswrite($client->{fh}, $client->{outbuf});
 
 	if (!defined $written) {
-		return if $self->_would_block($client->{fh}, 'write');
+		if ($self->_would_block($client->{fh}, 'write')) {
+			# The socket will take nothing now.  From here the reply has a
+			# deadline, cleared again as soon as any of it goes out.
+			$client->{stalled_since} = Time::HiRes::time()
+				unless defined $client->{stalled_since};
+			return;
+		}
+
 		$self->_drop_client($client, 'write error: ' . ($! || 'unknown error'));
 		return;
 	}
@@ -681,6 +768,10 @@ sub _flush {
 	}
 
 	substr($client->{outbuf}, 0, $written, '');
+	$self->{queued} -= $written;
+
+	# Some of it went out, so the clock starts again; an empty queue needs none.
+	$client->{stalled_since} = length $client->{outbuf} ? Time::HiRes::time() : undef;
 
 	# Anything still queued puts the fd back in the loop's writable set.
 	return;
@@ -904,6 +995,7 @@ sub _op_ping {
 	return {
 		ok          => 1,
 		classes     => [sort keys %{$self->{classes}}],
+		queued      => $self->{queued},
 		pid         => $$,
 		proto       => $Class::Shared::PROTOCOL_VERSION,
 		version     => $Class::Shared::VERSION,
@@ -1131,9 +1223,30 @@ Default one maximum-size frame (64 MiB) plus a little, so no reply the protocol
 allows is refused for being large.  Lower it to cap what a client that asks and
 does not read can hold; a reply larger than the setting is then dropped rather
 than queued.  The bound is per client, so all of them together may hold
-C<max_clients> times this: with both defaults that is more than any machine has,
-and a listener that hands out large replies to clients it does not trust should
-lower one or the other.
+C<max_clients> times this, which is more than any machine has; C<max_queued_total>
+is what stops that from being reachable.  A queued reply is also dropped if the
+socket takes none of it for C<write_timeout> seconds, so this bounds what one
+client may have waiting, not how long it may wait.
+
+=item max_queued_total
+
+How many bytes may be waiting to be written to all clients together before the
+reply that would pass it is refused.  Default four times C<max_queued>: enough
+that a few clients may each be holding a maximum-size reply, small enough that
+a few hundred cannot each be holding one.  A reply that would pass it is not
+queued and its client is dropped, with a log line giving the total, and its
+objects go with it; the alternative is a backend whose memory depends on how
+many clients decide to stop reading at once.
+
+=item write_timeout
+
+Seconds a queued reply may go without the socket taking any of it before the
+connection is dropped.  Default 30.  C<max_queued> bounds how much one client
+may have waiting; without this, a client that has stopped reading could leave a
+reply there for ever within that allowance.  Progress is what counts, so a slow
+client that keeps taking bytes is not dropped, however long the whole reply
+takes; one that takes nothing at all loses its connection, its queued reply and
+its objects.
 
 =item start_timeout
 
@@ -1203,7 +1316,9 @@ C<AUTOLOAD> may not be called, and the id must belong to this connection.
 
 =item ping
 
-C<{ op =E<gt> 'ping' }>.  Counters and identity, for C<class-shared status>.
+C<{ op =E<gt> 'ping' }>.  Counters and identity, for C<class-shared status>:
+objects, calls, clients, classes, uptime, and C<queued>, the bytes waiting to be
+written to all clients together, which is what C<max_queued_total> bounds.
 
 =item shutdown
 
@@ -1279,7 +1394,12 @@ Replies are queued per connection and written as the socket takes them, so a
 client that asks for an answer and then stops reading holds its own reply, not
 the loop.  What it may hold is bounded by C<max_queued>: once more than that is
 waiting to be written to it, the client is dropped, since the alternative is
-holding the backend's memory for as long as it chooses to stay connected.
+holding the backend's memory for as long as it chooses to stay connected.  For
+the same reason a queued reply that makes no progress for C<write_timeout>
+seconds is dropped too: the bound caps how much a client may hold, the timeout
+caps how long it may hold it.  C<max_queued_total> caps what all of them
+together may hold, so the memory a few hundred clients that all stop reading
+can pin is a number, not the product of two other numbers.
 
 The handshake is not done in C<accept>.  An accepted socket starts its TLS
 layer without a handshake and then finishes it, a little at a time, from the

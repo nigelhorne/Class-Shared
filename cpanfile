@@ -11,6 +11,7 @@ requires 'IO::Socket::UNIX';
 requires 'POSIX';
 requires 'Socket';
 requires 'Storable';
+requires 'Time::HiRes';
 recommends 'IO::Socket::SSL', '2.0';
 
 on 'configure' => sub {

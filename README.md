@@ -239,11 +239,21 @@ authentication: the socket is mode 0600 inside a directory only its owner can
 write to, so the kernel decides who may connect;
 - a real `fork`, which is how a frontend starts a backend in the background.
 
-MSWin32 has none of them -- its `stat` reports the same mode bits for every
-directory, so no directory there can be shown to be owner-only -- and is not
-supported.  It does not fail as if the directory you passed were at fault:
-`Class::Shared::ensure_dir` and `Class::Shared::socket_path` die with that
-explanation whenever they are reached on Windows.
+A perl without unix domain sockets can run none of it, so that is the question
+the check asks, rather than a list of operating systems: a Cygwin perl has the
+sockets and works, and a Windows perl does not and is refused, whatever `$^O`
+reports.  The other two travel with them in practice: MSWin32 also reports the
+same mode bits for every directory, so no directory there can be shown to be
+owner-only.
+
+The refusal does not look like a bad directory: `Class::Shared::ensure_dir` and
+`Class::Shared::socket_path` die with that explanation whenever they are
+reached on such a perl, and never with "writable by group or others".
+
+It installs there anyway, and `Makefile.PL` says so as it runs.  Refusing to
+install would take away [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol), which is pure Perl and can
+talk to a backend from a machine that cannot run one, and would leave such a
+platform with nothing to report but a failed install.
 
 The wire protocol, [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol), is pure Perl and loads on any
 platform, so it can be used to talk to a backend from a machine that cannot run

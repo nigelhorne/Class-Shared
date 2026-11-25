@@ -132,23 +132,43 @@ sub default_dir {
 }
 
 # Create $dir if needed and make sure nobody else can drop a socket in it.
-# Windows has no unix domain socket, no directory permissions worth reading
-# (its stat() reports the same mode bits for every directory, so "writable by
-# group or others" is always true there) and no fork that can start a listener,
-# so nothing here can work on it.  Say that where it is tried, rather than
-# blaming the directory the caller passed.  The platform is an argument so that
-# the refusal can be tested on a machine that is not Windows.
-sub _posix_only {
-	my ($what, $os) = @_;
+# Whether this perl can make a unix domain socket, which is what a backend is
+# reached through and what a frontend starts one over.  Probed rather than
+# assumed from $^O: a Cygwin perl is not MSWin32 and has them, and a platform
+# without them is refused whatever it calls itself.  The answer cannot change
+# during a run, so it is asked for once.
+our $UNIX_SOCKETS;
 
-	$os = $^O unless defined $os;
+sub _has_unix_sockets {
+	return $UNIX_SOCKETS if defined $UNIX_SOCKETS;
 
-	return if $os ne 'MSWin32';
+	$UNIX_SOCKETS = eval {
+		require Socket;
+		require IO::Socket::UNIX;
 
-	die "Class::Shared: $what is not available on MSWin32: it has no unix "
-		. "domain sockets, no directory permissions that keep other users out, "
-		. "and no fork that can start a listener.  This distribution is "
-		. "Unix-only (see PLATFORMS)\n";
+		socketpair(my $reader, my $writer, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0)
+			? 1
+			: 0;
+	} ? 1 : 0;
+
+	return $UNIX_SOCKETS;
+}
+
+# Nothing here can work without unix domain sockets, so say that where it is
+# tried rather than blaming the directory the caller passed: on a platform
+# without them there is no directory that would have helped.  Whether they
+# exist can be given as an argument, so the refusal is exercised by the suite
+# on machines that have them.
+sub _require_unix_sockets {
+	my ($what, $has_unix_sockets) = @_;
+
+	$has_unix_sockets = _has_unix_sockets() unless defined $has_unix_sockets;
+
+	return if $has_unix_sockets;
+
+	die "Class::Shared: $what is not available here: this perl has no unix "
+		. "domain sockets, so a backend could neither be reached nor started.  "
+		. "This distribution is Unix-only (see PLATFORMS)\n";
 }
 
 sub ensure_dir {
@@ -156,7 +176,7 @@ sub ensure_dir {
 
 	die "Class::Shared: no directory given\n" unless defined $dir && length $dir;
 
-	_posix_only('an owner-only directory');
+	_require_unix_sockets('a backend directory');
 
 	if (!-d $dir) {
 		mkdir($dir, 0700) or return (0, "cannot create $dir: $!");
@@ -180,7 +200,7 @@ sub ensure_dir {
 sub socket_path {
 	my ($dir) = @_;
 
-	_posix_only('a unix socket');
+	_require_unix_sockets('a unix socket');
 
 	$dir = default_dir(dir => $dir);
 
@@ -463,11 +483,21 @@ a real C<fork>, which is how a frontend starts a backend in the background.
 
 =back
 
-MSWin32 has none of them -- its C<stat> reports the same mode bits for every
-directory, so no directory there can be shown to be owner-only -- and is not
-supported.  It does not fail as if the directory you passed were at fault:
-C<Class::Shared::ensure_dir> and C<Class::Shared::socket_path> die with that
-explanation whenever they are reached on Windows.
+A perl without unix domain sockets can run none of it, so that is the question
+the check asks, rather than a list of operating systems: a Cygwin perl has the
+sockets and works, and a Windows perl does not and is refused, whatever C<$^O>
+reports.  The other two travel with them in practice: MSWin32 also reports the
+same mode bits for every directory, so no directory there can be shown to be
+owner-only.
+
+The refusal does not look like a bad directory: C<Class::Shared::ensure_dir> and
+C<Class::Shared::socket_path> die with that explanation whenever they are
+reached on such a perl, and never with "writable by group or others".
+
+It installs there anyway, and F<Makefile.PL> says so as it runs.  Refusing to
+install would take away L<Class::Shared::Protocol>, which is pure Perl and can
+talk to a backend from a machine that cannot run one, and would leave such a
+platform with nothing to report but a failed install.
 
 The wire protocol, L<Class::Shared::Protocol>, is pure Perl and loads on any
 platform, so it can be used to talk to a backend from a machine that cannot run
