@@ -43,7 +43,19 @@ Revision history for Class-Shared
         - The backend's log records every client it drops and why, so a
           connection that ends other than by a clean shutdown of its object
           leaves a trace there.
-        - bin/class-shared for serve, status, stop and path.
+        - Windows CI: t/01-protocol.t skipped its socket pair with a skip_all
+          after twenty-four tests had run, which TAP reads as a plan for zero
+          tests, so the whole file failed wherever socketpair(AF_UNIX) is
+          unavailable.  Those tests are SKIP blocks now, AF_UNIX is looked up
+          at run time rather than imported, and t/07-platform.t stops assuming
+          Windows lacks the sockets by forcing the answer through the probe's
+          cache, so the wiring is tested on every platform.
+        - Documented ctor, which the synopsis used without saying what it was:
+          the array reference of arguments for the shared class's new, sent
+          once, plain data only, with a dying constructor reported by new.
+        - bin/class-shared for serve, status, stop and path.  status prints the
+          bytes queued and the ceiling they are held against, so the queue's
+          memory use can be watched without a client asking for anything.
         - A total ceiling on queued replies, max_queued_total (default four
           times max_queued): a reply that would pass it is refused and its
           client dropped, so a few hundred clients that stop reading cannot
@@ -51,7 +63,13 @@ Revision history for Class-Shared
         - A queued reply that makes no progress is dropped after write_timeout
           seconds (default 30).  max_queued capped what one client could leave
           waiting, but not for how long, so a client that stopped reading could
-          sit on a full queue until it chose to go.
+          sit on a full queue until it chose to go.  Both queues check the
+          other side of that, on both transports: a client that reads slowly
+          but keeps reading for longer than the timeout receives its whole
+          reply and is not dropped, in t/09-unix-queue.t and over TLS in
+          t/04-tcp.t, so a deadline that ignored progress would not pass.
+          t/04-tcp.t also checks that a TLS reply which stops moving is dropped
+          on the same deadline, and that another client is served meanwhile.
         - Unix-only, and says so: the check asks whether this perl can make a
           unix domain socket, not what operating system it reports, so a perl
           without them is refused wherever it runs and Cygwin is not.  Where

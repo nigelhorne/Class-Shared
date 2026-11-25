@@ -12,9 +12,12 @@ BEGIN {
 }
 
 use File::Temp qw(tempdir);
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use lib 't/lib';
 
 use Class::Shared::Frontend;
+use Class::Shared::Protocol;
 
 my $dir = tempdir(CLEANUP => 1);
 
@@ -40,6 +43,79 @@ like($status, qr/^pid \d+/m, 'status names the backend pid');
 like($status, qr/^classes: Shared::Counter$/m, 'and the class it has loaded');
 like($status, qr/\d+ object\(s\)/, 'status counts the objects');
 like($status, qr/address: .*\.sock/, 'status names the address');
+
+# The queue is what the memory bound is holding, so status reports it as a
+# number against the ceiling: none while nothing waits, and a real one while an
+# unread reply sits there.
+my ($idle_queued, $ceiling) = $status =~ /^queued:\s+(\d+) of (\d+) byte\(s\)$/m;
+
+is($idle_queued, 0, 'status counts the queued bytes, and nothing is waiting');
+cmp_ok($ceiling // 0, '>', 1024 * 1024,
+	'and names the ceiling those bytes are held against');
+
+my $raw = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $frontend->shared_socket_path);
+ok($raw, 'a raw client can ask for a reply it will not read');
+
+if ($raw) {
+	my $ask = sub {
+		my ($message) = @_;
+
+		my ($bytes) = Class::Shared::Protocol::encode_frame($message);
+		return unless defined $bytes;
+		return unless Class::Shared::Protocol::write_all($raw, $bytes);
+
+		my ($reply) = Class::Shared::Protocol::read_frame($raw, 5);
+		return $reply;
+	};
+
+	my $hello = $ask->({
+		op    => 'hello',
+		proto => $Class::Shared::PROTOCOL_VERSION,
+		class => 'Shared::Counter',
+	});
+	my $object = $hello && $hello->{ok} ? $ask->({ op => 'new', args => [] }) : undef;
+
+	ok($object && $object->{ok}, 'and has an object of its own');
+
+	if ($object) {
+		# 4 MiB fits the queue and not the socket, so most of it waits.
+		my ($call) = Class::Shared::Protocol::encode_frame({
+			op     => 'call',
+			id     => $object->{id},
+			method => 'blob',
+			args   => [4 * 1024 * 1024],
+			want   => 'scalar',
+		});
+		Class::Shared::Protocol::write_all($raw, $call) if defined $call;
+
+		my $busy_status = '';
+		my $queued;
+		for (1 .. 40) {
+			$busy_status = `$cli status --dir $dir 2>&1`;
+			($queued) = $busy_status =~ /^queued:\s+(\d+) of \d+ byte\(s\)$/m;
+			last if defined $queued && $queued > 0;
+			select(undef, undef, undef, 0.05);
+		}
+
+		is($?, 0, 'status answers while a reply is waiting') or diag $busy_status;
+		cmp_ok($queued // 0, '>', 0,
+			'and the queued bytes include the reply that has not gone out');
+		cmp_ok($queued // 0, '<', $ceiling // 0,
+			'and they are below the ceiling it names');
+
+		close $raw;
+
+		my $after = '';
+		for (1 .. 40) {
+			$after = `$cli status --dir $dir 2>&1`;
+			last if $after =~ /^queued:\s+0 of /m;
+			select(undef, undef, undef, 0.05);
+		}
+
+		like($after, qr/^queued:\s+0 of \d+ byte\(s\)$/m,
+			'and back to none when that client goes');
+	}
+}
 
 my $token_file = "$dir/token";
 open(my $token_fh, '>', $token_file) or die "cannot write $token_file: $!";

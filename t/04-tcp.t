@@ -781,6 +781,198 @@ ok(drain_until_closed($piler),
 	'and is dropped when replies that each fit add up past the bound');
 close $piler;
 
+# The queue's deadline is not a unix-socket thing either.  Over TLS a write that
+# stops making progress is an SSL would-block, which is a different call on the
+# stream from a plain one, and it has to start the same clock.  A reply that
+# fits the queue is queued and never read, and is dropped once write_timeout
+# passes -- while another client is served, so what expires is the queue and not
+# the loop.
+my $stall_probe = IO::Socket::INET->new(
+	LocalAddr => '127.0.0.1',
+	LocalPort => 0,
+	Proto     => 'tcp',
+	Listen    => 1,
+	ReuseAddr => 1,
+) or BAIL_OUT("cannot reserve a port for the stall backend: $!");
+my $stall_port = $stall_probe->sockport;
+close $stall_probe;
+
+my $stall_dir = File::Spec->catdir($dir, 'stall');
+mkdir $stall_dir, 0700 or BAIL_OUT("cannot make $stall_dir: $!");
+my $stall_log = File::Spec->catfile($stall_dir, 'log');
+
+my $stall_pid = fork;
+BAIL_OUT("cannot fork: $!") unless defined $stall_pid;
+
+if (!$stall_pid) {
+	no warnings 'exec';
+	exec(
+		$^X, '-Ilib', '-It/lib', '-MClass::Shared::Backend', '-e',
+		'Class::Shared::Backend->new(' . join(', ',
+			'host => shift', 'port => shift',
+			'token => shift', 'tls_cert => shift', 'tls_key => shift',
+			'tls_ca => shift', 'dir => shift', 'log => shift',
+			'max_queued => shift', 'write_timeout => shift') . ')->run()',
+		'127.0.0.1', $stall_port, 's3cret-token',
+		$pem{server}, $pem{'server-key'}, $pem{ca},
+		$stall_dir, $stall_log, 32 * 1024 * 1024, 1,
+	);
+	POSIX::_exit(127);
+}
+
+END {
+	kill 'TERM', $stall_pid if $stall_pid && kill(0, $stall_pid);
+}
+
+my $stall_ready;
+for (1 .. 100) {
+	$stall_ready = eval { frontend(port => $stall_port, ctor => [start => 41]) };
+	last if $stall_ready;
+	select(undef, undef, undef, 0.05);
+}
+
+ok($stall_ready, 'a TLS backend with a one second write timeout came up')
+	or diag $@;
+
+if ($stall_ready) {
+	my $baseline = $stall_ready->shared_status->{objects};
+
+	my ($quiet, $quiet_id) = tls_client_with_object($stall_port);
+	ok($quiet, 'a client that will not read has a connection and an object');
+
+	# 16 MiB fits the queue and cannot fit the TLS stream or its buffering, so
+	# the rest waits -- unread, and so on a deadline.
+	my ($quiet_call) = Class::Shared::Protocol::encode_frame({
+		op     => 'call',
+		id     => $quiet_id,
+		method => 'blob',
+		args   => [16 * 1024 * 1024],
+		want   => 'scalar',
+	}, 's3cret-token');
+	BAIL_OUT('cannot encode the 16 MiB request for the stall backend')
+		unless defined $quiet_call;
+	Class::Shared::Protocol::write_all($quiet, $quiet_call);
+
+	my $stall_started = Time::HiRes::time();
+
+	my $during = eval { frontend(port => $stall_port, ctor => [start => 43]) };
+	ok($during && $during->value == 43,
+		'another client is served while the TLS reply makes no progress');
+	$during->shared_close if $during;
+
+	my $stalled = '';
+	my $give_up = $stall_started + 8;
+	while (Time::HiRes::time() < $give_up) {
+		if (-e $stall_log) {
+			open(my $log_fh, '<', $stall_log) or BAIL_OUT("cannot read $stall_log: $!");
+			$stalled = do { local $/; <$log_fh> };
+			close $log_fh;
+		}
+		last if $stalled =~ /made no progress/;
+		select(undef, undef, undef, 0.05);
+	}
+
+	my $stall_elapsed = Time::HiRes::time() - $stall_started;
+
+	like($stalled,
+		qr/a queued reply of \d+ bytes made no progress for 1 second/,
+		'and the SSL queue that stops moving is dropped when write_timeout passes');
+	cmp_ok($stall_elapsed, '>=', 0.9,
+		"not before its deadline ($stall_elapsed s)");
+
+	ok(drain_until_closed($quiet), 'and that connection is closed');
+	close $quiet;
+
+	my $left = '?';
+	for (1 .. 50) {
+		$left = $stall_ready->shared_status->{objects};
+		last if $left == $baseline;
+		select(undef, undef, undef, 0.1);
+	}
+
+	is($left, $baseline, 'and the object of the client that timed out is destroyed');
+
+	# The other side of the same clock over TLS: an SSL write that takes part of
+	# the queue is progress, so a reader that keeps taking it across several
+	# deadlines is kept and gets the whole reply.
+	my ($reader, $reader_id) = tls_client_with_object($stall_port);
+	ok($reader, 'a TCP client that will read slowly has a connection and an object');
+
+	my ($reader_call) = Class::Shared::Protocol::encode_frame({
+		op     => 'call',
+		id     => $reader_id,
+		method => 'blob',
+		args   => [16 * 1024 * 1024],
+		want   => 'scalar',
+	}, 's3cret-token');
+	BAIL_OUT('cannot encode the 16 MiB request for the slow reader')
+		unless defined $reader_call;
+	Class::Shared::Protocol::write_all($reader, $reader_call);
+
+	# 256 KiB at a time, then a pause worth the same at 5 MiB/s: about three
+	# seconds to drain the reply, three times the deadline, but the queue is
+	# never left a whole deadline without the socket taking some of it.
+	my $reader_started = Time::HiRes::time();
+	my $reader_give_up = $reader_started + 60;
+	my $reader_buffer  = '';
+	my $reader_chunk   = 256 * 1024;
+	my $reader_pause   = 0.05;
+
+	while (length($reader_buffer) < 4
+		|| length($reader_buffer) < 4 + unpack('N', substr($reader_buffer, 0, 4))) {
+
+		my $rin = '';
+		vec($rin, fileno($reader), 1) = 1;
+		BAIL_OUT('the TLS backend stopped writing before the reply was all there')
+			unless select(my $rout = $rin, undef, undef, 5);
+
+		my $got = sysread($reader, my $data, $reader_chunk);
+		BAIL_OUT('the TLS connection was closed while the reply was still coming')
+			unless defined $got && $got > 0;
+
+		$reader_buffer .= $data;
+		select(undef, undef, undef, $reader_pause * $got / $reader_chunk);
+
+		BAIL_OUT('the slow TLS reply took far longer than it should')
+			if Time::HiRes::time() > $reader_give_up;
+	}
+
+	# The frame carries the token's digest, so it is taken with the same secret.
+	my ($reader_frame, $reader_reply, $reader_error)
+		= Class::Shared::Protocol::take_frame(\$reader_buffer, 's3cret-token');
+	my $reader_elapsed = Time::HiRes::time() - $reader_started;
+
+	ok($reader_frame == 1
+			&& length($reader_reply->{result}[0] // '') == 16 * 1024 * 1024,
+		'the whole TLS reply arrived'
+			. ($reader_error ? " ($reader_error)" : ''));
+
+	cmp_ok($reader_elapsed, '>', 2,
+		"and reading it took longer than write_timeout ($reader_elapsed s)");
+
+	my $stall_text = '';
+	if (-e $stall_log) {
+		open(my $log_fh, '<', $stall_log) or BAIL_OUT("cannot read $stall_log: $!");
+		$stall_text = do { local $/; <$log_fh> };
+		close $log_fh;
+	}
+
+	my $drops = () = $stall_text =~ /made no progress/g;
+	is($drops, 1, 'and no second deadline fired for the client that kept reading');
+
+	is($stall_ready->shared_status->{objects}, $baseline + 1,
+		'and that client keeps its object');
+
+	close $reader;
+
+	ok($stall_ready->shared_shutdown, 'the stall backend can be stopped');
+	$stall_ready->shared_close;
+
+	waitpid($stall_pid, 0);
+	is($?, 0, 'and it exited cleanly');
+	undef $stall_pid;
+}
+
 # Nothing can be autostarted over TCP: a closed port is an error.
 my $closed = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1',

@@ -228,7 +228,7 @@ Class::Shared - keep one instance of a class and let other processes call it
     use Class::Shared::Frontend;
 
     my $simple = Class::Shared::Frontend->new('Class::Simple',
-        ctor => [ verbose => 1 ],
+        ctor => [ verbose => 1 ],          # arguments for Class::Simple->new
     );
 
     $simple->do_something($argument);      # runs in the shared backend
@@ -255,6 +255,16 @@ L<Class::Shared::Backend> that loaded the class once and does the work.
 So there is one copy of the class in the system and as many objects as there are
 frontends: C<< Class::Shared::Frontend->new('Class::Simple', ...) >> is one call
 to C<< Class::Simple->new(...) >>, in the backend.
+
+The arguments for that constructor go in C<ctor>, as an array reference:
+C<ctor =E<gt> [verbose =E<gt> 1]> is
+C<< Class::Simple->new(verbose =E<gt> 1) >>.  They are used once, when the
+frontend connects and asks the backend for the object, and they travel over the
+socket, so they must be plain data -- a code reference cannot be sent.  If the
+constructor dies, the frontend's C<new> dies too, naming the class and the error
+the backend reported.
+
+L<Class::Shared::Frontend> lists every option this constructor takes.
 
 The frontend never loads the target class, so it stays cheap.  An object lives
 as long as the connection that made it; when the frontend goes, the backend

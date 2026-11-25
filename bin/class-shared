@@ -133,6 +133,11 @@ sub status {
 	printf "classes: %s\n", (@{$classes} ? join(', ', @{$classes}) : 'none');
 	printf "address: %s\n", $response->{address};
 	printf "clients: %d\n", $response->{clients};
+
+	# What the memory bound is holding: the bytes waiting to be written to all
+	# clients, against the ceiling that decides when a reply is refused.
+	printf "queued:  %d of %d byte(s)\n", $response->{queued}, $response->{max_queued_total};
+
 	printf "log:     %s\n", log_path_for();
 
 	return;
@@ -481,8 +486,9 @@ start without any of them.  A unix socket takes none of them, because its mode
 
 Pings the backend and prints what it reports: the pid, version, protocol,
 number of objects, number of calls, uptime, the classes it has loaded, the
-address it is listening on, the number of clients and the log path.  Prints
-nothing and exits non-zero if no backend answers.
+address it is listening on, the number of clients, the bytes queued against the
+ceiling they are bounded by, and the log path.  Prints nothing and exits
+non-zero if no backend answers.
 
 =item stop
 

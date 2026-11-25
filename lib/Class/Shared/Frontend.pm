@@ -699,7 +699,19 @@ The class name may be the first argument or C<class =E<gt> 'Class::Simple'>.
 
 =item ctor
 
-Array reference of arguments for the target's C<new>.  Defaults to none.
+Array reference of arguments for the target's C<new>, passed as a list in the
+order given: C<ctor =E<gt> [verbose =E<gt> 1]> is
+C<< Class::Simple->new(verbose =E<gt> 1) >>, and
+C<ctor =E<gt> [{verbose =E<gt> 1}]> is
+C<< Class::Simple->new({verbose =E<gt> 1}) >>.  Defaults to none, which is
+C<< Class::Simple->new() >>.
+
+They are used once, when the frontend connects and the backend constructs the
+object, and they are serialised to get there, so they must be plain data: a
+code reference, or anything else Storable cannot freeze, is reported when the
+frontend is constructed rather than silently dropped.  A constructor that dies
+makes C<new> die with C<Class::Shared: could not construct Class::Simple: > and
+the error the backend reported.
 
 =item dir
 

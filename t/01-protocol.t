@@ -3,7 +3,9 @@ use warnings;
 
 use Test::More;
 use File::Spec ();
-use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC);
+# AF_UNIX is asked for at run time, not imported: a perl whose Socket has no
+# such constant should skip the socket pair tests, not fail to compile.
+use Socket qw(SOCK_STREAM);
 use lib 't/lib';
 
 use Class::Shared::Protocol;
@@ -51,15 +53,27 @@ is_deeply($decoded, $message, 'the message survives a round trip');
 	is($huge[0], -1, 'an oversized frame is refused');
 	like($huge[2], qr/exceeds the limit/, 'with an explanation');
 
-	open(my $empty, '<', File::Spec->devnull) or plan skip_all => "cannot open $!";
-	my (undef, $error) = Class::Shared::Protocol::read_frame($empty);
-	like($error, qr/closed/, 'read_frame reports a stream with nothing to read');
+	SKIP: {
+		my $empty;
+
+		skip "cannot open the null device: $!", 1
+			unless open($empty, '<', File::Spec->devnull);
+
+		my (undef, $error) = Class::Shared::Protocol::read_frame($empty);
+		like($error, qr/closed/, 'read_frame reports a stream with nothing to read');
+	}
 }
 
-# Real socket pair.
-{
-	socketpair(my $writer, my $reader, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
-		or plan skip_all => "socketpair failed: $!";
+# Real socket pair, where the platform can make one.  Windows cannot make an
+# AF_UNIX pair, and these have to be skipped in place: a skip_all after tests
+# have already run is a plan for zero tests, which TAP reads as a failure.
+SKIP: {
+	my $af_unix = eval { Socket::AF_UNIX() };
+	my ($writer, $reader);
+
+	skip 'this platform cannot make an AF_UNIX socket pair', 3
+		unless defined $af_unix
+		&& socketpair($writer, $reader, $af_unix, SOCK_STREAM, 0);
 
 	my ($written, $write_error) = Class::Shared::Protocol::write_all($writer, $bytes);
 	ok($written, 'write_all writes the frame') or diag $write_error;
@@ -155,11 +169,14 @@ is_deeply($decoded, $message, 'the message survives a round trip');
 	is($taken[0], -1, 'a frame larger than a digest plus the limit is refused');
 
 	# read_frame authenticates the same way, before it thaws.
-	my ($writer, $reader);
-	my $paired = socketpair($writer, $reader, AF_UNIX, SOCK_STREAM, PF_UNSPEC);
-	ok($paired, 'have a socket pair to read from') or diag "socketpair: $!";
+	SKIP: {
+		my $af_unix = eval { Socket::AF_UNIX() };
+		my ($writer, $reader);
 
-	if ($paired) {
+		skip 'this platform cannot make an AF_UNIX socket pair', 4
+			unless defined $af_unix
+			&& socketpair($writer, $reader, $af_unix, SOCK_STREAM, 0);
+
 		my ($sent) = Class::Shared::Protocol::write_all($writer, $broken_body);
 		ok($sent, 'a tampered frame is written to it');
 

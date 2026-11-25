@@ -719,15 +719,16 @@ sub _send {
 		return;
 	}
 
+	# The stall clock belongs to the queue, and it starts with it: this is the
+	# only place a queue begins.  _flush restarts it on every write that takes
+	# bytes out and clears it when the queue empties; nothing else sets it, so a
+	# waiting reply can only get older, never fresher.  A reply added to a queue
+	# that is already waiting does not get a new deadline.
+	$client->{stalled_since} = Time::HiRes::time()
+		unless length $client->{outbuf};
+
 	$client->{outbuf} .= $bytes;
 	$self->{queued} += $length;
-
-	# The queue has a deadline from now: it is pushed forward by every write
-	# that takes some of it and cleared when the queue empties.  Waiting for
-	# writability alone would never notice a socket that never becomes
-	# writable again.
-	$client->{stalled_since} = Time::HiRes::time()
-		unless defined $client->{stalled_since};
 
 	$self->_flush($client);
 
@@ -749,10 +750,9 @@ sub _flush {
 
 	if (!defined $written) {
 		if ($self->_would_block($client->{fh}, 'write')) {
-			# The socket will take nothing now.  From here the reply has a
-			# deadline, cleared again as soon as any of it goes out.
-			$client->{stalled_since} = Time::HiRes::time()
-				unless defined $client->{stalled_since};
+			# Nothing went out, so the deadline does not move: a socket that keeps
+			# taking nothing stays on the clock of its last progress instead of
+			# being handed a fresh one every time the loop tries it again.
 			return;
 		}
 
@@ -770,7 +770,9 @@ sub _flush {
 	substr($client->{outbuf}, 0, $written, '');
 	$self->{queued} -= $written;
 
-	# Some of it went out, so the clock starts again; an empty queue needs none.
+	# Progress, so the clock starts again -- or stops, if there is nothing left
+	# to wait for.  _send started it when it made the queue; _expire_writes only
+	# reads it; those two lines and this one are the whole of the rule.
 	$client->{stalled_since} = length $client->{outbuf} ? Time::HiRes::time() : undef;
 
 	# Anything still queued puts the fd back in the loop's writable set.
@@ -996,6 +998,7 @@ sub _op_ping {
 		ok          => 1,
 		classes     => [sort keys %{$self->{classes}}],
 		queued      => $self->{queued},
+		max_queued_total => $self->{max_queued_total},
 		pid         => $$,
 		proto       => $Class::Shared::PROTOCOL_VERSION,
 		version     => $Class::Shared::VERSION,
@@ -1317,8 +1320,10 @@ C<AUTOLOAD> may not be called, and the id must belong to this connection.
 =item ping
 
 C<{ op =E<gt> 'ping' }>.  Counters and identity, for C<class-shared status>:
-objects, calls, clients, classes, uptime, and C<queued>, the bytes waiting to be
-written to all clients together, which is what C<max_queued_total> bounds.
+objects, calls, clients, classes, uptime, C<queued> (the bytes waiting to be
+written to all clients together) and C<max_queued_total>, the ceiling those
+bytes are held against, so the one number can be read as a fraction of the
+other.
 
 =item shutdown
 

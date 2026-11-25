@@ -20,11 +20,14 @@ like($@, qr/PLATFORMS/, 'pointing at the section that explains it');
 eval { Class::Shared::_require_unix_sockets('a backend', 1); 1 };
 is($@, '', 'a perl that has them is not refused');
 
-if ($^O eq 'MSWin32') {
-	ok(!Class::Shared::_has_unix_sockets(), 'this perl really has no unix domain sockets');
+# The guard is wired into the two calls a backend makes, so what a user without
+# the sockets sees is the explanation rather than "writable by group or others".
+# The probe's answer is forced through its cache, so this runs the same way
+# everywhere: what is tested is the wiring, not whether this machine happens to
+# be the one without the sockets.
+{
+	local $Class::Shared::UNIX_SOCKETS = 0;
 
-	# The guard is wired into the calls a backend makes, so what a Windows user
-	# sees is the explanation, not "writable by group or others".
 	for my $attempt (
 		['ensure_dir', sub { Class::Shared::ensure_dir(tempdir(CLEANUP => 1)) }],
 		['socket_path', sub { Class::Shared::socket_path(tempdir(CLEANUP => 1)) }],
@@ -34,22 +37,27 @@ if ($^O eq 'MSWin32') {
 		my $returned = eval { $code->(); 1 };
 
 		like($@, qr/no unix domain sockets/, "$name refuses a perl without them");
+		like($@, qr/PLATFORMS/, "and $name points at the section that explains it");
 		ok(!$returned, "and $name does not pretend to work");
 	}
-
-	done_testing();
-	exit 0;
 }
 
-# On a platform that has them, the same calls work, so the refusal is about the
-# capability and nothing else.
-ok(Class::Shared::_has_unix_sockets(), 'this perl has unix domain sockets');
+# On a platform that really has them, and owner-only directories to put them
+# in, the same calls work: the refusal is about the capability and nothing else.
+# Windows has the second half of that neither, whatever its sockets do, so only
+# the refusal above is checked there.
+SKIP: {
+	skip 'MSWin32 has no POSIX directory permissions to check', 3
+		if $^O eq 'MSWin32';
 
-my $dir = tempdir(CLEANUP => 1);
+	ok(Class::Shared::_has_unix_sockets(), 'this perl has unix domain sockets');
 
-my ($ok, $why) = Class::Shared::ensure_dir($dir);
-ok($ok, 'ensure_dir accepts an owner-only directory') or diag $why;
-like(Class::Shared::socket_path($dir), qr/\Qclass-shared.sock\E\z/,
-	'and socket_path names the backend socket inside it');
+	my $dir = tempdir(CLEANUP => 1);
+
+	my ($ok, $why) = Class::Shared::ensure_dir($dir);
+	ok($ok, 'ensure_dir accepts an owner-only directory') or diag $why;
+	like(Class::Shared::socket_path($dir), qr/\Qclass-shared.sock\E\z/,
+		'and socket_path names the backend socket inside it');
+}
 
 done_testing();

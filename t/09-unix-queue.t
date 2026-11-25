@@ -5,7 +5,7 @@ use Test::More;
 
 # t/04 covers the reply queue over TLS.  The unix socket takes a different path
 # into the same code -- it is made non-blocking in _accept rather than in
-# _start_tls -- so it gets the same tests.  Three cases, because a reply over
+# _start_tls -- so it gets the same tests.  Five cases, because a reply over
 # the bound is refused before anything is written, a reply within it is written
 # in part and the rest queued, and a queued reply that never moves is on a
 # deadline:
@@ -16,7 +16,11 @@ use Test::More;
 #      loop serves another client meanwhile, and the whole reply arrives intact
 #      when the client finally reads it;
 #   3. within max_queued and never read: the connection is dropped once the
-#      queue has made no progress for write_timeout, and its object goes with it.
+#      queue has made no progress for write_timeout, and its object goes with it;
+#   4. replies that each fit max_queued and together pass max_queued_total: the
+#      one that would pass it is refused and dropped, the others are untouched;
+#   5. within max_queued and read slowly but steadily for longer than
+#      write_timeout: the whole reply arrives and the connection is kept.
 BEGIN {
 	plan skip_all => 'this uses a unix socket in an owner-only directory, '
 		. "which MSWin32 does not have"
@@ -459,6 +463,103 @@ my ($total_stopped, $total_status) = run_cli($total_dir, 'stop');
 is($total_status, 0, 'the capped backend stops') or diag $total_stopped;
 
 waitpid($total_pid, 0);
+is($?, 0, 'and exits cleanly');
+
+# ---- 5. Slow is not stalled: a reader that keeps taking the reply is kept.
+
+my $slow_dir = File::Spec->catdir($dir, 'slow');
+mkdir $slow_dir, 0700 or BAIL_OUT("cannot make $slow_dir: $!");
+my $slow_log = "$slow_dir/slow.log";
+
+# The same one second deadline case 3 uses to drop a reader, spent instead on a
+# reader that takes about three seconds to drain one reply.
+my $slow_pid = start_backend($slow_dir, $slow_log, write_timeout => 1);
+my $slow_path = Class::Shared::socket_path($slow_dir);
+
+my ($slow, $slow_id);
+for (1 .. 100) {
+	($slow, $slow_id) = new_connection($slow_path, 'Shared::Counter');
+	last if $slow;
+	select(undef, undef, undef, 0.05);
+}
+
+ok($slow, 'a backend with a one second write timeout came up');
+BAIL_OUT('no backend to test slow reading against') unless $slow;
+
+my $slow_size = 1024 * 1024;
+BAIL_OUT('cannot send the 1 MiB request') unless send_frame($slow, {
+	op     => 'call',
+	id     => $slow_id,
+	method => 'blob',
+	args   => [$slow_size],
+	want   => 'scalar',
+});
+
+# Take 64 KiB, then sleep as long as that much would take at 320 KiB/s.  The
+# reply takes about three seconds, three times the deadline, but the queue is
+# never left a whole deadline without the client taking the next piece: an
+# implementation that dropped on age rather than on lack of progress would cut
+# this connection off at one second and lose the rest of the reply.
+my $slow_started  = Time::HiRes::time();
+my $slow_deadline = $slow_started + 30;
+my $slow_buffer   = '';
+my $chunk         = 64 * 1024;
+my $pause         = 0.2;
+
+while (length($slow_buffer) < 4
+	|| length($slow_buffer) < 4 + unpack('N', substr($slow_buffer, 0, 4))) {
+
+	my $rin = '';
+	vec($rin, fileno($slow), 1) = 1;
+	BAIL_OUT('the backend stopped writing the reply before it was all there')
+		unless select(my $rout = $rin, undef, undef, 5);
+
+	my $got = sysread($slow, my $data, $chunk);
+	BAIL_OUT('the connection was closed while the reply was still coming')
+		unless defined $got && $got > 0;
+
+	$slow_buffer .= $data;
+	select(undef, undef, undef, $pause * $got / $chunk);
+
+	BAIL_OUT('the slow reply took far longer than it should')
+		if Time::HiRes::time() > $slow_deadline;
+}
+
+my ($frame, $slow_reply, $slow_error)
+	= Class::Shared::Protocol::take_frame(\$slow_buffer);
+
+my $slow_elapsed = Time::HiRes::time() - $slow_started;
+
+is($frame, 1, 'the whole reply arrived'
+	. (defined $slow_error ? " ($slow_error)" : ''));
+
+BAIL_OUT('no reply to check') unless $frame == 1;
+
+is(length($slow_reply->{result}[0]), $slow_size, 'and it is the whole 1 MiB value');
+
+cmp_ok($slow_elapsed, '>', 2,
+	"reading it took longer than write_timeout ($slow_elapsed s)");
+
+is(objects_held($slow_dir), 1,
+	'and the client that kept reading keeps its object');
+
+my $after = ask($slow, {
+	op     => 'call',
+	id     => $slow_id,
+	method => 'value',
+	args   => [],
+	want   => 'scalar',
+});
+
+ok($after && $after->{ok} && defined $after->{result},
+	'and the connection still answers afterwards');
+
+close $slow;
+
+my ($slow_stopped, $slow_status) = run_cli($slow_dir, 'stop');
+is($slow_status, 0, 'the slow-reading backend stops') or diag $slow_stopped;
+
+waitpid($slow_pid, 0);
 is($?, 0, 'and exits cleanly');
 
 # ---- the first backend, still holding nothing.
