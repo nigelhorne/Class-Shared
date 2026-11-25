@@ -77,6 +77,17 @@ useful when writing your own client.
     FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
     result would be too long for a `sockaddr_un`.
 
+- Class::Shared::client\_tls\_options(%options)
+
+    The TLS options an [IO::Socket::SSL](https://metacpan.org/pod/IO%3A%3ASocket%3A%3ASSL) client needs, as a list to pass straight
+    to `IO::Socket::SSL->new(...)`: `cert` and `key`, plus either `ca` (a
+    PEM file, with the certificate's name checked too) or `fingerprint` (a digest
+    from `Class::Shared::normalise_fingerprint`, which replaces both the CA and
+    the name).
+    [Class::Shared::Frontend](https://metacpan.org/pod/Class%3A%3AShared%3A%3AFrontend) and [class-shared](https://metacpan.org/pod/class-shared) both use it, so the two cannot
+    disagree about what verifying a backend means.  Loads [IO::Socket::SSL](https://metacpan.org/pod/IO%3A%3ASocket%3A%3ASSL) when
+    called, and nothing else does.
+
 - Class::Shared::normalise\_fingerprint($value)
 
     Turns a certificate fingerprint into the form the TLS layer wants: `sha256$`
@@ -119,6 +130,74 @@ one alone has been enough to lose a system.
 
 See ["SECURITY" in Class::Shared::Backend](https://metacpan.org/pod/Class%3A%3AShared%3A%3ABackend#SECURITY) for the backend's side of it and
 [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol) for the framing.
+
+### Making the Certificates
+
+A TCP listener needs four files: a CA, the listener's certificate and key, and
+a certificate for every client.  OpenSSL makes them in three steps.  The CA's
+key signs certificates and is not needed on the machines that use them.
+
+```
+# 1. A CA of your own.
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    -keyout ca-key.pem -out ca.pem -subj '/CN=Class::Shared CA' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign'
+```
+
+The listener's certificate has to name the address clients connect to, in
+`subjectAltName`: a `DNS:` entry for a hostname, an `IP:` entry for an
+address, or both.
+
+```
+# 2. The listener's certificate.  Put your own addresses in server.ext.
+printf 'subjectAltName = DNS:classhost.example.com, IP:127.0.0.1\n' > server.ext
+printf 'extendedKeyUsage = serverAuth\n' >> server.ext
+openssl req -new -newkey rsa:2048 -nodes -subj '/CN=classhost.example.com' \
+    -keyout server-key.pem -out server.csr
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem \
+    -CAcreateserial -days 3650 -out server.pem -extfile server.ext
+```
+
+Each client needs a certificate of its own.  The backend cannot tell one from
+another beyond this, so give each client, or each pair of them, their own.
+
+```
+# 3. A client certificate.
+printf 'extendedKeyUsage = clientAuth\n' > client.ext
+openssl req -new -newkey rsa:2048 -nodes -subj '/CN=class-shared client' \
+    -keyout client-key.pem -out client.csr
+openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
+    -CAcreateserial -days 3650 -out client.pem -extfile client.ext
+```
+
+The listener is given three of the files:
+
+```
+class-shared serve --class Class::Simple --listen tcp:0.0.0.0:7000 \
+    --token-file /etc/class-shared/token \
+    --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
+```
+
+and every client the other three:
+
+```perl
+my $simple = Class::Shared::Frontend->new('Class::Simple',
+    host       => 'classhost.example.com',
+    port       => 7000,
+    tls_ca     => 'ca.pem',
+    tls_cert   => 'client.pem',
+    tls_key    => 'client-key.pem',
+    token_file => '/etc/class-shared/token',
+);
+```
+
+A frontend that pins the listener's certificate instead of trusting the CA skips
+`tls_ca` and passes `tls_fingerprint` the digest that
+`openssl x509 -in server.pem -noout -fingerprint -sha256` prints.  That works
+with a self-signed certificate too, and then the CA is only needed for the
+clients.  `t/certs/make-certs.sh` in the distribution generates this set, plus
+a second CA and impostor certificates, for the tests.
 
 ## Limitations
 

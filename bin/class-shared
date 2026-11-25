@@ -289,29 +289,18 @@ sub talk {
 	if (defined $host) {
 		require IO::Socket::SSL;
 
-		my %ssl = (
-			SSL_cert_file   => $tls{tls_cert},
-			SSL_key_file    => $tls{tls_key},
-			SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
-		);
-
-		if (defined $tls{tls_fingerprint}) {
-			# A pin names one exact certificate, so it replaces the CA
-			# and the name, and nothing else can accept the peer.
-			$ssl{SSL_fingerprint}       = $tls{tls_fingerprint};
-			$ssl{SSL_force_fingerprint} = 1;
-			$ssl{SSL_verifycn_scheme}   = 'none';
-		} else {
-			$ssl{SSL_ca_file} = $tls{tls_ca};
-		}
-
 		$where = "$host:$port";
 		$sock = IO::Socket::SSL->new(
 			PeerAddr => $host,
 			PeerPort => $port,
 			Proto    => 'tcp',
 			Timeout  => 5,
-			%ssl,
+			Class::Shared::client_tls_options(
+				cert        => $tls{tls_cert},
+				key         => $tls{tls_key},
+				ca          => $tls{tls_ca},
+				fingerprint => $tls{tls_fingerprint},
+			),
 		);
 
 		if (!$sock) {
@@ -334,6 +323,18 @@ sub talk {
 
 	if (!$hello) {
 		close $sock;
+
+		# Over TLS a backend that will not accept this certificate drops the
+		# connection during the handshake: the stream closes before a reply,
+		# which says nothing about certificates unless we name it.
+		if (defined $host && defined $hello_error
+			&& $hello_error =~ /closed by peer|read failed|write failed/)
+		{
+			return (undef,
+				"handshake failed: the backend refused this client's certificate: "
+				. 'check that --tls-cert and --tls-key are a certificate it accepts, '
+				. "and that --tls-ca is the CA it trusts for clients (detail: $hello_error)");
+		}
 
 		# A backend with a token will not let a frame it cannot authenticate
 		# through, and it signs its replies too, so a caller with no token

@@ -373,30 +373,17 @@ sub _open {
 		# one, is not a connection.
 		require IO::Socket::SSL;
 
-		my %tls = (
-			SSL_cert_file   => $self->{tls_cert},
-			SSL_key_file    => $self->{tls_key},
-			SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
-		);
-
-		if (defined $self->{tls_fingerprint}) {
-			# A pin names one exact certificate, so it stands in for both the
-			# CA and the name.  SSL_force_fingerprint makes the digest the
-			# only thing that can accept the peer, rather than a fallback for
-			# a chain that failed.
-			$tls{SSL_fingerprint}       = $self->{tls_fingerprint};
-			$tls{SSL_force_fingerprint} = 1;
-			$tls{SSL_verifycn_scheme}   = 'none';
-		} else {
-			$tls{SSL_ca_file} = $self->{tls_ca};
-		}
-
 		my $sock = IO::Socket::SSL->new(
 			PeerAddr => $self->{host},
 			PeerPort => $self->{port},
 			Proto    => 'tcp',
 			Timeout  => $self->{timeout},
-			%tls,
+			Class::Shared::client_tls_options(
+				cert        => $self->{tls_cert},
+				key         => $self->{tls_key},
+				ca          => $self->{tls_ca},
+				fingerprint => $self->{tls_fingerprint},
+			),
 		);
 
 		if (!$sock) {
@@ -436,14 +423,7 @@ sub _greet {
 	if (!defined $response) {
 		close $sock;
 
-		# A backend with a token will not let a frame it cannot
-		# authenticate through, and its replies are signed too, so a
-		# client with no token cannot read them.
-		my $why = defined $self->{token}
-			? $error
-			: "$error (this backend may require a token)";
-
-		$self->{last_error} = "handshake failed: $why";
+		$self->{last_error} = 'handshake failed: ' . $self->_first_exchange_failed($error);
 		return undef;
 	}
 
@@ -456,6 +436,30 @@ sub _greet {
 	$self->{last_error} = undef;
 
 	return $sock;
+}
+
+# Say what a failed first exchange most likely means.  Over TLS a backend that
+# will not accept this client's certificate drops the connection during the
+# handshake, before it can answer: from here that is a stream closing at once,
+# and calling it "connection closed by peer" hides the one thing that would fix
+# it.  A backend that accepted the certificate but not the token does answer,
+# with a frame this side cannot read, so that case keeps the token wording.
+sub _first_exchange_failed {
+	my ($self, $error) = @_;
+
+	if ($self->{transport} eq 'tcp' && defined $error
+		&& $error =~ /closed by peer|read failed|write failed/)
+	{
+		my $hint = "the backend refused this client's certificate: check that "
+			. 'tls_cert and tls_key are a certificate it accepts, and that tls_ca '
+			. 'holds the CA it trusts for clients';
+
+		return "$hint (detail: $error)";
+	}
+
+	return $error if defined $self->{token};
+
+	return "$error (this backend may require a token)";
 }
 
 sub _create_object {
@@ -732,7 +736,8 @@ Give one or the other, not both: a CA and a pin are alternatives.
 
 The certificate and private key this client presents.  The backend verifies
 clients, so a connection without one is refused during the handshake and this
-frontend gets no object.
+frontend gets no object; the error says the backend refused the certificate and
+names these options.
 
 =item token, token_file
 

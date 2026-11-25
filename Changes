@@ -22,7 +22,11 @@ Revision history for Class-Shared
           any client it cannot verify during the handshake; a frontend or
           command line client verifies the backend either against a CA file
           (name included) or against a pinned SHA-256 fingerprint of its
-          certificate, and presents its own.  The token stays as a second, independent
-          check on every frame, so a certificate is not a substitute for the
-          secret and the secret is not a substitute for the certificate.
+          certificate, and presents its own.  The handshake is carried on a
+          step at a time from the select loop rather than inside accept(), so a
+          client that connects and then says nothing holds one connection slot
+          for five seconds instead of freezing every client being served.  The
+          token stays as a second, independent check on every frame, so a
+          certificate is not a substitute for the secret and the secret is not
+          a substitute for the certificate.
         - bin/class-shared for serve, status, stop and path.

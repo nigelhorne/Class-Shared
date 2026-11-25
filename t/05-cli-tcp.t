@@ -21,7 +21,8 @@ use Net::SSLeay ();
 
 my $certs = File::Spec->catdir('t', 'certs');
 my %pem = map { $_ => File::Spec->catfile($certs, "$_.pem") }
-	qw(ca server server-key client client-key other-ca other-server);
+	qw(ca server server-key client client-key other-ca other-server
+	other-client other-client-key);
 
 sub fingerprint {
 	my ($pem) = @_;
@@ -123,6 +124,15 @@ like($status, qr/clients: \d+/, 'and its client count');
 my $wrong = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $bad_token_file $tls 2>&1`;
 isnt($?, 0, 'status with the wrong token fails');
 like($wrong, qr/failed authentication/, 'and says the frames did not authenticate');
+
+# A client certificate the backend will not accept closes the connection during
+# the handshake, before any frame: say that, rather than reporting a closed
+# stream that suggests nothing in particular.
+my $bad_cert = `$cli status --class Shared::Counter --host 127.0.0.1 --port $port --token-file $token_file --tls-cert $pem{'other-client'} --tls-key $pem{'other-client-key'} --tls-ca $pem{ca} 2>&1`;
+isnt($?, 0, 'status with a client certificate the backend refuses fails');
+like($bad_cert, qr/refused this client's certificate/,
+	'and says the certificate was refused');
+like($bad_cert, qr/--tls-cert.*--tls-ca/, 'naming the options worth checking');
 
 # The CLI verifies the backend before it sends a frame, so a CA that did not
 # sign it is the end of the attempt.

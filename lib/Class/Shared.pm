@@ -75,6 +75,35 @@ sub normalise_fingerprint {
 	return 'sha256$' . lc $hex;
 }
 
+# The TLS options a client hands to IO::Socket::SSL->new, in one place so the
+# frontend and the command line cannot drift apart about what verification
+# means.  IO::Socket::SSL is loaded here rather than at the top of this module:
+# a unix socket never needs any of it.
+sub client_tls_options {
+	my (%opt) = @_;
+
+	require IO::Socket::SSL;
+
+	my %tls = (
+		SSL_cert_file   => $opt{cert},
+		SSL_key_file    => $opt{key},
+		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+	);
+
+	if (defined $opt{fingerprint}) {
+		# A pin names one exact certificate, so it stands in for both the CA
+		# and the name, and SSL_force_fingerprint makes the digest the only
+		# thing that can accept the peer.
+		$tls{SSL_fingerprint}       = $opt{fingerprint};
+		$tls{SSL_force_fingerprint} = 1;
+		$tls{SSL_verifycn_scheme}   = 'none';
+	} else {
+		$tls{SSL_ca_file} = $opt{ca};
+	}
+
+	return %tls;
+}
+
 sub dir_of {
 	my ($path) = @_;
 	my $dir = File::Basename::dirname($path);
@@ -246,6 +275,17 @@ Returns the socket path for C<$class>, mangling the name and appending an
 FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
 result would be too long for a C<sockaddr_un>.
 
+=item Class::Shared::client_tls_options(%options)
+
+The TLS options an L<IO::Socket::SSL> client needs, as a list to pass straight
+to C<IO::Socket::SSL-E<gt>new(...)>: C<cert> and C<key>, plus either C<ca> (a
+PEM file, with the certificate's name checked too) or C<fingerprint> (a digest
+from C<Class::Shared::normalise_fingerprint>, which replaces both the CA and
+the name).
+L<Class::Shared::Frontend> and L<class-shared> both use it, so the two cannot
+disagree about what verifying a backend means.  Loads L<IO::Socket::SSL> when
+called, and nothing else does.
+
 =item Class::Shared::normalise_fingerprint($value)
 
 Turns a certificate fingerprint into the form the TLS layer wants: C<sha256$>
@@ -290,6 +330,64 @@ one alone has been enough to lose a system.
 
 See L<Class::Shared::Backend/SECURITY> for the backend's side of it and
 L<Class::Shared::Protocol> for the framing.
+
+=head2 Making the certificates
+
+A TCP listener needs four files: a CA, the listener's certificate and key, and
+a certificate for every client.  OpenSSL makes them in three steps.  The CA's
+key signs certificates and is not needed on the machines that use them.
+
+    # 1. A CA of your own.
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout ca-key.pem -out ca.pem -subj '/CN=Class::Shared CA' \
+        -addext 'basicConstraints=critical,CA:TRUE' \
+        -addext 'keyUsage=critical,keyCertSign,cRLSign'
+
+The listener's certificate has to name the address clients connect to, in
+C<subjectAltName>: a C<DNS:> entry for a hostname, an C<IP:> entry for an
+address, or both.
+
+    # 2. The listener's certificate.  Put your own addresses in server.ext.
+    printf 'subjectAltName = DNS:classhost.example.com, IP:127.0.0.1\n' > server.ext
+    printf 'extendedKeyUsage = serverAuth\n' >> server.ext
+    openssl req -new -newkey rsa:2048 -nodes -subj '/CN=classhost.example.com' \
+        -keyout server-key.pem -out server.csr
+    openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem \
+        -CAcreateserial -days 3650 -out server.pem -extfile server.ext
+
+Each client needs a certificate of its own.  The backend cannot tell one from
+another beyond this, so give each client, or each pair of them, their own.
+
+    # 3. A client certificate.
+    printf 'extendedKeyUsage = clientAuth\n' > client.ext
+    openssl req -new -newkey rsa:2048 -nodes -subj '/CN=class-shared client' \
+        -keyout client-key.pem -out client.csr
+    openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem \
+        -CAcreateserial -days 3650 -out client.pem -extfile client.ext
+
+The listener is given three of the files:
+
+    class-shared serve --class Class::Simple --listen tcp:0.0.0.0:7000 \
+        --token-file /etc/class-shared/token \
+        --tls-cert server.pem --tls-key server-key.pem --tls-ca ca.pem
+
+and every client the other three:
+
+    my $simple = Class::Shared::Frontend->new('Class::Simple',
+        host       => 'classhost.example.com',
+        port       => 7000,
+        tls_ca     => 'ca.pem',
+        tls_cert   => 'client.pem',
+        tls_key    => 'client-key.pem',
+        token_file => '/etc/class-shared/token',
+    );
+
+A frontend that pins the listener's certificate instead of trusting the CA skips
+C<tls_ca> and passes C<tls_fingerprint> the digest that
+C<openssl x509 -in server.pem -noout -fingerprint -sha256> prints.  That works
+with a self-signed certificate too, and then the CA is only needed for the
+clients.  F<t/certs/make-certs.sh> in the distribution generates this set, plus
+a second CA and impostor certificates, for the tests.
 
 =head1 LIMITATIONS
 

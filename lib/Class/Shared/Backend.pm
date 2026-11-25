@@ -5,6 +5,7 @@ use warnings;
 
 use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_CREAT);
 use File::Spec ();
+use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
@@ -15,6 +16,11 @@ our $VERSION = '0.01';
 
 our $DEFAULT_MAX_CLIENTS = 512;
 our $DEFAULT_MAX_OBJECTS = 4096;
+
+# How long a connection may spend on its TLS handshake.  The handshake is done
+# a little at a time from the select loop, so a peer that connects and then
+# says nothing costs one connection slot for this long, not the whole backend.
+our $HANDSHAKE_TIMEOUT = 5;
 
 # The backend loads one class, once, and holds many objects made from it: one
 # per frontend.  Clients talk to it over a unix socket or TCP.
@@ -83,8 +89,11 @@ sub new {
 		control       => $control,
 		log           => $opt{log} || ($control . '.log'),
 		daemonize     => $opt{daemonize} ? 1 : 0,
-		max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
-		max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
+					max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
+			max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
+			handshake_timeout => defined $opt{handshake_timeout}
+				? $opt{handshake_timeout}
+				: $HANDSHAKE_TIMEOUT,
 		start_timeout => defined $opt{start_timeout} ? $opt{start_timeout} : 2,
 		objects       => {},
 		clients       => {},
@@ -239,24 +248,31 @@ sub _setup_tcp {
 	# as it never paid for the digest.
 	require IO::Socket::SSL;
 
-	# The listener is the TLS endpoint, not something wrapped around one: the
-	# handshake happens inside accept(), so a client that cannot show a
-	# certificate signed by tls_ca never becomes a connection in the loop.
-	# Timeout bounds a peer that connects and then says nothing.
-	my $listener = IO::Socket::SSL->new(
-		LocalAddr       => $self->{host},
-		LocalPort       => $self->{port},
-		Proto           => 'tcp',
-		Listen          => 64,
-		ReuseAddr       => 1,
-		Timeout         => 5,
+	# One context for every connection: the certificates are read and checked
+	# once, and each accepted socket starts its handshake against it.
+	my $context = IO::Socket::SSL::SSL_Context->new(
+		SSL_server      => 1,
 		SSL_cert_file   => $self->{tls_cert},
 		SSL_key_file    => $self->{tls_key},
 		SSL_ca_file     => $self->{tls_ca},
 		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER()
 			| IO::Socket::SSL::SSL_VERIFY_FAIL_IF_NO_PEER_CERT(),
-	) or die "cannot listen on $self->{host}:$self->{port}: "
+	) or die "cannot set up TLS for $self->{host}:$self->{port}: "
 		. (IO::Socket::SSL::errstr() || "$!" || 'unknown error') . "\n";
+
+	$self->{tls_context} = $context;
+
+	# The listener is plain TCP.  The handshake belongs to the connection, where
+	# it can be carried a little at a time as that connection becomes ready; in
+	# accept() it would stall every client already being served for as long as
+	# the newest one stayed silent.
+	my $listener = IO::Socket::INET->new(
+		LocalAddr => $self->{host},
+		LocalPort => $self->{port},
+		Proto     => 'tcp',
+		Listen    => 64,
+		ReuseAddr => 1,
+	) or die "cannot listen on $self->{host}:$self->{port}: $!\n";
 
 	$self->{listener} = $listener;
 	$self->{address} = $self->{host} . ':' . $self->{port};
@@ -274,14 +290,32 @@ sub _loop {
 
 	while (!$self->{stop}) {
 		my $rin = '';
+		my $win = '';
+		my $handshaking = 0;
+
 		vec($rin, fileno($self->{listener}), 1) = 1;
 
 		for my $client (values %{$self->{clients}}) {
 			my $fd = fileno($client->{fh});
-			vec($rin, $fd, 1) = 1 if defined $fd;
+			next unless defined $fd;
+
+			vec($rin, $fd, 1) = 1;
+
+			next unless $client->{handshaking};
+			$handshaking = 1;
+
+			# A handshake can want to write as well (TLS 1.3 tickets, a full
+			# send buffer), so wait for that only when it asked for it.
+			vec($win, $fd, 1) = 1 if $client->{want_write};
 		}
 
-		my $ready = select(my $rout = $rin, undef, undef, undef);
+		# With a handshake in progress, wake up now and then: a peer that
+		# never speaks would otherwise keep select asleep past its deadline.
+		my $ready = select(my $rout = $rin, my $wout = $win, undef,
+			$handshaking ? 0.25 : undef);
+
+		$self->_expire_handshakes if $handshaking;
+
 		next if !defined $ready || $ready <= 0;
 
 		if (vec($rout, fileno($self->{listener}), 1)) {
@@ -294,11 +328,35 @@ sub _loop {
 
 			my $fd = fileno($client->{fh});
 			next unless defined $fd;
-			next unless vec($rout, $fd, 1);
 
-			$self->_serve_client($client);
+			if ($client->{handshaking}) {
+				next unless vec($rout, $fd, 1)
+					|| ($client->{want_write} && vec($wout, $fd, 1));
+				$self->_continue_tls($client);
+			} else {
+				next unless vec($rout, $fd, 1);
+				$self->_serve_client($client);
+			}
+
 			last if $self->{stop};
 		}
+	}
+
+	return 1;
+}
+
+# Drop connections whose handshake has run out of time, so a peer that opens a
+# socket and then says nothing frees its slot again.
+sub _expire_handshakes {
+	my $self = shift;
+
+	my $now = time;
+
+	for my $client (values %{$self->{clients}}) {
+		next unless $client->{handshaking};
+		next if $client->{deadline} > $now;
+
+		$self->_drop_client($client, 'TLS handshake timed out');
 	}
 
 	return 1;
@@ -308,35 +366,28 @@ sub _accept {
 	my $self = shift;
 
 	my $fh = $self->{listener}->accept;
-
-	if (!$fh) {
-		# Over TCP this is a handshake that failed: no certificate, one from
-		# a CA we do not trust, or a client that never spoke TLS.  There is
-		# nobody to send a frame to, so just record it.
-		if (defined $self->{host}) {
-			my $why = IO::Socket::SSL::errstr();
-			$self->_log("refused a TLS connection: $why")
-				if defined $why && length $why;
-		}
-		return;
-	}
+	return unless $fh;
 
 	if (keys %{$self->{clients}} >= $self->{max_clients}) {
-		# Signed like every other frame, because the client will check the
-		# digest before it thaws the reply.
-		my ($bytes) = Class::Shared::Protocol::encode_frame({
-			ok    => 0,
-			kind  => 'busy',
-			error => "backend is serving too many clients ($self->{max_clients})",
-		}, $self->{token});
-		Class::Shared::Protocol::write_all($fh, $bytes) if defined $bytes;
+		# A unix client can be told, signed like every other frame.  A TCP
+		# client has not handshaken yet, so there is no session to sign one
+		# for: it is closed, and the frontend reports a failed connection.
+		if (!defined $self->{host}) {
+			my ($bytes) = Class::Shared::Protocol::encode_frame({
+				ok    => 0,
+				kind  => 'busy',
+				error => "backend is serving too many clients ($self->{max_clients})",
+			}, $self->{token});
+			Class::Shared::Protocol::write_all($fh, $bytes) if defined $bytes;
+		}
+
 		close $fh;
 		return;
 	}
 
 	fcntl($fh, F_SETFD, FD_CLOEXEC);
 
-	$self->{clients}{ fileno($fh) } = {
+	my $client = {
 		fh      => $fh,
 		buffer  => '',
 		greeted => 0,
@@ -344,7 +395,82 @@ sub _accept {
 		objects => {},
 	};
 
+	if (defined $self->{host}) {
+		my $ssl = $self->_start_tls($fh);
+
+		if (!$ssl) {
+			$self->_log('refused a TLS connection: '
+				. (IO::Socket::SSL::errstr() || 'cannot start a handshake'));
+			close $fh;
+			return;
+		}
+
+		$client->{fh}          = $ssl;
+		$client->{handshaking} = 1;
+		$client->{want_write}  = 0;
+		$client->{deadline}    = time + $self->{handshake_timeout};
+	}
+
+	$self->{clients}{ fileno($client->{fh}) } = $client;
+
 	return 1;
+}
+
+# Give an accepted socket its TLS layer but do not perform the handshake here:
+# accept_SSL() is called from the select loop as the socket becomes ready, so a
+# silent peer holds one pending handshake instead of the whole backend.
+sub _start_tls {
+	my ($self, $fh) = @_;
+
+	$fh->blocking(0);
+
+	return IO::Socket::SSL->start_SSL(
+		$fh,
+		SSL_server         => 1,
+		SSL_startHandshake => 0,
+		SSL_reuse_ctx      => $self->{tls_context},
+	);
+}
+
+# One step of a pending handshake.  Returns nothing; the client either becomes
+# an ordinary connection, waits for the next readiness, or is dropped.
+sub _continue_tls {
+	my ($self, $client) = @_;
+
+	my $fh = $client->{fh};
+
+	if ($fh->accept_SSL) {
+		$client->{handshaking} = 0;
+		$client->{want_write}  = 0;
+		delete $client->{deadline};
+
+		# Frame handling is written for a blocking socket: only the
+		# handshake needed to be incremental.
+		$fh->blocking(1);
+
+		return 1;
+	}
+
+	# A failed handshake reblesses the socket back to the plain class it was
+	# upgraded from, so the handle can no longer answer TLS questions.  Ask
+	# the TLS layer for the last error instead.
+	my $error = do { no warnings 'once'; $IO::Socket::SSL::SSL_ERROR };
+
+	if (defined $error && $error == IO::Socket::SSL::SSL_WANT_READ()) {
+		$client->{want_write} = 0;
+		return 1;
+	}
+
+	if (defined $error && $error == IO::Socket::SSL::SSL_WANT_WRITE()) {
+		$client->{want_write} = 1;
+		return 1;
+	}
+
+	$self->_log('refused a TLS connection: '
+		. (IO::Socket::SSL::errstr() || 'handshake failed'));
+	$self->_drop_client($client, 'TLS handshake failed');
+
+	return;
 }
 
 sub _serve_client {
@@ -847,7 +973,10 @@ by C<die> to whoever started it.
 
 =item max_clients
 
-How many connections to accept before refusing more.  Default 128.
+How many connections to accept before refusing more, including connections
+still handshaking.  Default 128.  A unix client over the limit is sent a signed
+C<busy> reply; a TCP client has no TLS session yet to sign one for, so it is
+closed and its frontend reports a failed connection.
 
 =item max_objects
 
@@ -857,6 +986,12 @@ How many objects to hold before refusing to construct more.  Default 4096.
 
 Seconds to wait for another backend that is shutting down to release its lock.
 Default 2.
+
+=item handshake_timeout
+
+Seconds a TCP connection may spend on its TLS handshake before it is dropped
+and its slot freed.  Default 5.  Nothing else is bounded by it: a client that
+has finished its handshake may sit idle for as long as it likes.
 
 =back
 
@@ -968,6 +1103,22 @@ certificate for C<classhost.example.com> is the one to issue for a backend
 reached at that name.  A frontend given a C<tls_fingerprint> instead pins this
 exact certificate by digest, in which case the name and the signer (a private
 CA, or none at all) do not have to satisfy anybody.
+
+The commands that produce the four files, with the C<subjectAltName> the
+certificate needs and a working frontend to match, are in
+L<Class::Shared/TRANSPORT SECURITY>; F<t/certs/make-certs.sh> in the
+distribution generates the same set, with a second CA and impostor
+certificates, for the tests.
+
+The handshake is not done in C<accept>.  An accepted socket starts its TLS
+layer without a handshake and then finishes it, a little at a time, from the
+select loop as that socket becomes readable or writable.  A peer that connects
+and then says nothing therefore costs one pending handshake for at most
+C<handshake_timeout> seconds (five by default), after which it is dropped and
+its slot freed, while every client already connected keeps being served in the
+meantime.  Doing the handshake in C<accept> would let
+anyone who can reach the port freeze the backend for the length of the timeout,
+and the loop is single-threaded, so that would be every client.
 
 =head1 AUTHOR
 

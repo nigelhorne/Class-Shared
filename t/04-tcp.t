@@ -5,6 +5,7 @@ use Test::More;
 use File::Spec ();
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
+use Time::HiRes ();
 use POSIX ();
 use lib 't/lib';
 
@@ -174,7 +175,7 @@ my @refused = (
 	[
 		'a certificate from a CA the backend does not trust',
 		{ tls_cert => $pem{'other-client'}, tls_key => $pem{'other-client-key'} },
-		qr/closed|read failed|handshake failed|TLS/i,
+		qr/refused this client's certificate.*tls_cert.*tls_ca/s,
 	],
 );
 
@@ -357,6 +358,125 @@ close $plain;
 
 is($frontend->shared_status->{constructed}, $constructed,
 	'and none of those attempts constructed an object');
+
+# A connection that opens and then says nothing must not stall the backend:
+# the handshake is carried on from the select loop, not inside accept().
+my @silent;
+for (1 .. 3) {
+	my $quiet = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => 5,
+	) or BAIL_OUT("cannot open a silent connection: $!");
+	push @silent, $quiet;
+}
+
+# Let the backend accept them and start handshakes that will never finish, so
+# the real client below is the one that has to wait if the loop is blocked.
+select(undef, undef, undef, 0.3);
+
+my $started = Time::HiRes::time();
+my $during = eval { frontend(ctor => [start => 11]) };
+my $elapsed = Time::HiRes::time() - $started;
+
+ok($during, 'a real client connects while silent clients are mid-handshake')
+	or diag $@;
+is($during->value, 11, 'and its object works') if $during;
+cmp_ok($elapsed, '<', 3,
+	"and is served at once, not after a handshake timeout ($elapsed s)");
+$during->shared_close if $during;
+
+close $_ for @silent;
+
+# The handshake deadline is a constructor option, so a backend with a short one
+# can be started here: a client that connects and says nothing has to lose its
+# slot when its time is up, and the real client has to keep working.
+my $deadline_probe = IO::Socket::INET->new(
+	LocalAddr => '127.0.0.1',
+	LocalPort => 0,
+	Proto     => 'tcp',
+	Listen    => 1,
+	ReuseAddr => 1,
+) or BAIL_OUT("cannot reserve a port for the deadline backend: $!");
+my $deadline_port = $deadline_probe->sockport;
+close $deadline_probe;
+
+my $deadline_dir = File::Spec->catdir($dir, 'deadline');
+
+my $short_pid = fork;
+BAIL_OUT("cannot fork: $!") unless defined $short_pid;
+
+if (!$short_pid) {
+	no warnings 'exec';    # exec() does not return when it works
+	exec(
+		$^X, '-Ilib', '-It/lib', '-MClass::Shared::Backend', '-e',
+		'Class::Shared::Backend->new(' . join(', ',
+			'class => shift', 'host => shift', 'port => shift',
+			'token => shift', 'tls_cert => shift', 'tls_key => shift',
+			'tls_ca => shift', 'dir => shift', 'log => shift',
+			'handshake_timeout => shift') . ')->run()',
+		'Shared::Counter', '127.0.0.1', $deadline_port, 's3cret-token',
+		$pem{server}, $pem{'server-key'}, $pem{ca},
+		$deadline_dir, File::Spec->catfile($deadline_dir, 'log'), 1,
+	);
+	POSIX::_exit(127);
+}
+
+END {
+	kill 'TERM', $short_pid if $short_pid && kill(0, $short_pid);
+}
+
+my $real;
+for (1 .. 100) {
+	$real = eval { frontend(port => $deadline_port, ctor => [start => 3]) };
+	last if $real;
+	select(undef, undef, undef, 0.05);
+}
+
+ok($real, 'a backend with a short handshake deadline came up') or diag $@;
+
+if ($real) {
+	is($real->value, 3, 'the real client has its object');
+
+	my $baseline = $real->shared_status->{clients};
+
+	my $lonely = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => $deadline_port,
+		Proto    => 'tcp',
+		Timeout  => 5,
+	) or BAIL_OUT("cannot open a silent connection: $!");
+
+	my $holding = 0;
+	for (1 .. 40) {
+		if ($real->shared_status->{clients} > $baseline) {
+			$holding = 1;
+			last;
+		}
+		select(undef, undef, undef, 0.05);
+	}
+	ok($holding, 'a silent client holds a slot while its handshake is pending');
+
+	my $freed = 0;
+	for (1 .. 60) {
+		if ($real->shared_status->{clients} <= $baseline) {
+			$freed = 1;
+			last;
+		}
+		select(undef, undef, undef, 0.1);
+	}
+	ok($freed, 'and loses it once its handshake deadline passes');
+
+	is($real->value, 3, 'while the real client carries on working');
+
+	close $lonely;
+
+	ok($real->shared_shutdown, 'the deadline backend can be stopped');
+	waitpid($short_pid, 0);
+	is($?, 0, 'and it exited cleanly');
+	undef $short_pid;
+}
 
 # Nothing can be autostarted over TCP: a closed port is an error.
 my $closed = IO::Socket::INET->new(
