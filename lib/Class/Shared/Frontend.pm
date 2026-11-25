@@ -41,7 +41,9 @@ sub new {
 	my $class = shift;
 
 	my $target;
-	if (@_ && !ref $_[0] && !exists $KNOWN_OPTION{$_[0]}) {
+	# An undef first argument is "no class name": it is taken as the target so
+	# that the check below reports it, instead of warning on the lookup.
+	if (@_ && !ref $_[0] && (!defined $_[0] || !exists $KNOWN_OPTION{$_[0]})) {
 		$target = shift @_;
 	}
 

@@ -2,6 +2,9 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - t/17-first-time-user.t: first-time-user flows (minimal, odd-order and
+          repeated calls to the frontend, helpers, protocol, backend and
+          command), each asserting an explicit one-line failure or result.
         - Class::Shared::Backend holds many objects, one per client connection,
           over a unix socket or TCP, and serves every class its clients ask
           for: a client names the class in its handshake and the backend
