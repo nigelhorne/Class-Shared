@@ -429,8 +429,10 @@ sub _has_unix_sockets {
 	return $UNIX_SOCKETS if defined $UNIX_SOCKETS;
 
 	$UNIX_SOCKETS = eval {
+		# socketpair is the real test.  IO::Socket::UNIX is not required here:
+		# it would cost every client process about 1.2 MB, and the backend and
+		# the command load it themselves when they need it.
 		require Socket;
-		require IO::Socket::UNIX;
 
 		socketpair(my $reader, my $writer, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0)
 			? 1

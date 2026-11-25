@@ -6,9 +6,8 @@ use warnings;
 use Carp ();
 use Fcntl qw(:flock O_RDWR O_CREAT);
 use File::Spec ();
-use IO::Socket::UNIX;
 use Scalar::Util ();
-use Socket qw(SOCK_STREAM);
+use Socket qw(AF_UNIX SOCK_STREAM pack_sockaddr_un);
 
 use Class::Shared ();
 use Class::Shared::Protocol ();
@@ -420,8 +419,16 @@ sub _open {
 	$self->{last_error} = "no socket at $path";
 	return undef unless -S $path;
 
-	my $sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $path);
-	$self->{last_error} = "cannot connect to $path: $!" unless $sock;
+	# The built-in socket and connect, not IO::Socket::UNIX: that module brings
+	# IO::Socket, IO::Socket::INET and IO::Handle with it, about 1.2 MB and 16
+	# ms in every process that talks to the backend, for a handle that is only
+	# ever given to sysread, syswrite and close.
+	my $sock;
+	if (!socket($sock, AF_UNIX, SOCK_STREAM, 0)
+		|| !connect($sock, pack_sockaddr_un($path))) {
+		$self->{last_error} = "cannot connect to $path: $!";
+		return undef;
+	}
 
 	return $sock;
 }

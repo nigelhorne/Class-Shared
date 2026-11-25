@@ -3,6 +3,7 @@ package Class::Shared::Protocol;
 use strict;
 use warnings;
 
+use Scalar::Util ();
 use Storable ();
 
 our $VERSION = '0.001.0';
@@ -109,7 +110,9 @@ sub _read_exact {
 		# A TLS socket can be holding decrypted bytes that select cannot
 		# see, because they arrived in a record already read from the kernel.
 		# Take those before waiting for more.
-		if ($fh->can('pending') && $fh->pending) {
+		# Only an object (a TLS socket) can say what it is holding.  Calling a
+		# method on a plain handle would make Perl load IO::File to answer.
+		if (Scalar::Util::blessed($fh) && $fh->can('pending') && $fh->pending) {
 			my $pending = sysread($fh, $buffer, $length - length($buffer),
 				length($buffer));
 

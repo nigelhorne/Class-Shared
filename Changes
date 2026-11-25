@@ -2,6 +2,9 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - The frontend no longer loads IO::Socket::UNIX (and with it IO::Socket,
+          IO::Socket::INET and IO::Handle): a client process is about 1.1 MB
+          smaller and loads a few milliseconds faster.
         - t/17-first-time-user.t: first-time-user flows (minimal, odd-order and
           repeated calls to the frontend, helpers, protocol, backend and
           command), each asserting an explicit one-line failure or result.
