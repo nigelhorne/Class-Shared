@@ -8,6 +8,7 @@ requires 'File::Basename';
 requires 'File::Spec';
 requires 'Getopt::Long';
 requires 'IO::Socket::UNIX';
+requires 'Log::Abstraction', '0.41';
 requires 'Object::Configure', '0.26';
 requires 'POSIX';
 requires 'Params::Get', '0.17';

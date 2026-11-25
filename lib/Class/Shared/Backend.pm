@@ -11,6 +11,7 @@ use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 use Time::HiRes ();
 
+use Log::Abstraction ();
 use Object::Configure ();
 use Params::Get ();
 use Params::Validate::Strict ();
@@ -192,7 +193,8 @@ sub new {
 		started       => time,
 		stop          => 0,
 		cleaned       => 0,
-		logfh         => undef,
+		logger        => undef,
+		logger_pid    => undef,
 		listener      => undef,
 		lock          => undef,
 		owns_socket   => 0,
@@ -285,7 +287,7 @@ sub run {
 	my $started = eval { $self->_setup; 1 };
 	if (!$started) {
 		my $error = $@ || 'unknown error';
-		$self->_log("fatal: $error");
+		$self->_log("fatal: $error", 'error');
 		die $error unless $self->{daemonize};
 		exit 1;
 	}
@@ -393,7 +395,7 @@ sub _setup {
 	open($pid_fh, '>', $pid_path)
 		&& print({$pid_fh} "$$\n")
 		&& close($pid_fh)
-		or $self->_log("cannot write $pid_path: $!");
+		or $self->_log("cannot write $pid_path: $!", 'error');
 
 	return 1;
 }
@@ -623,7 +625,7 @@ sub _accept {
 	# can be skipped: a blocking socket stalls everybody, and one that leaks
 	# into an exec'd child outlives its connection.
 	if (!(fcntl($fh, F_SETFD, FD_CLOEXEC) && defined $fh->blocking(0))) {
-		$self->_log("refused a connection: cannot prepare its socket: $!");
+		$self->_log("refused a connection: cannot prepare its socket: $!", 'warn');
 		$self->_close($fh, 'a refused connection');
 		return;
 	}
@@ -643,7 +645,7 @@ sub _accept {
 
 		if (!$ssl) {
 			$self->_log('refused a TLS connection: '
-				. (IO::Socket::SSL::errstr() || 'cannot start a handshake'));
+				. (IO::Socket::SSL::errstr() || 'cannot start a handshake'), 'warn');
 			$self->_close($fh, 'a refused connection');
 			return;
 		}
@@ -708,7 +710,7 @@ sub _continue_tls {
 	}
 
 	$self->_log('refused a TLS connection: '
-		. (IO::Socket::SSL::errstr() || 'handshake failed'));
+		. (IO::Socket::SSL::errstr() || 'handshake failed'), 'warn');
 	$self->_drop_client($client, 'TLS handshake failed');
 
 	return;
@@ -784,7 +786,7 @@ sub _serve_client {
 		if ($@) {
 			my $internal = $@;
 			$internal =~ s/\s+\z//;
-			$self->_log("internal error while handling a request: $internal");
+			$self->_log("internal error while handling a request: $internal", 'error');
 			$response = _failure('internal', $internal);
 		}
 
@@ -804,7 +806,7 @@ sub _drop_client {
 
 	return 1 if $client->{closed};
 
-	$self->_log('dropped a client: ' . (defined $reason && length $reason ? $reason : 'no reason given'));
+	$self->_log('dropped a client: ' . (defined $reason && length $reason ? $reason : 'no reason given'), 'warn');
 
 	# Whatever was waiting to be written goes with the connection: there is
 	# nobody left to read it.
@@ -845,7 +847,7 @@ sub _send {
 		# Neither the reply nor the frame saying it could not be sent can be
 		# encoded, so this client will never hear anything: say so here.
 		if (!defined $bytes) {
-			$self->_log("cannot encode a reply: " . ($encode_error || 'unknown error'));
+			$self->_log("cannot encode a reply: " . ($encode_error || 'unknown error'), 'error');
 			return;
 		}
 	}
@@ -1184,7 +1186,7 @@ sub _cleanup {
 
 	if ($self->{lock}) {
 		flock($self->{lock}, LOCK_UN)
-			or $self->_log("cannot release the lock: $!");
+			or $self->_log("cannot release the lock: $!", 'error');
 		$self->_close($self->{lock}, 'the lock file');
 		$self->{lock} = undef;
 	}
@@ -1218,7 +1220,8 @@ sub _daemonize {
 	my ($detached, $detach_error) = Class::Shared::detach_standard_streams($self->{log});
 	die "$detach_error\n" unless $detached;
 
-	$self->{logfh} = undef;
+	# The logger names this process in every line, and this is a new one.
+	$self->{logger} = undef;
 
 	return 1;
 }
@@ -1233,7 +1236,7 @@ sub _close {
 
 	return 1 if close($fh);
 
-	$self->_log("cannot close $what: " . ($! || 'unknown error'));
+	$self->_log("cannot close $what: " . ($! || 'unknown error'), 'error');
 
 	return 0;
 }
@@ -1248,31 +1251,46 @@ sub _unlink {
 
 	return 1 if unlink($path) || $!{ENOENT};
 
-	$self->_log("cannot remove $path: $!");
+	$self->_log("cannot remove $path: $!", 'error');
 
 	return 0;
 }
 
+# Purpose:       write one line to the backend's log, through Log::Abstraction.
+# Entry:         $message is the text; $level is a Log::Abstraction level name
+#                ('info' if left out; 'warn' and 'error' for trouble).
+# Exit status:   1 if the line was handed to the logger, 0 if there is no logger
+#                (the log could not be set up).
+# Side effects:  makes the logger on first use, and again in a new process;
+#                appends to the log file.  A failure to log is not reported
+#                anywhere, because the log is where reports go.
 sub _log {
-	my ($self, $message) = @_;
+	my ($self, $message, $level) = @_;
 
-	my $path = $self->{log} || ($self->{control} . '.log');
-	$path =~ s/[\r\n]+/ /g;
-	$message =~ s/[\r\n]+/ /g;
+	$level = 'info' unless defined $level;
 
-	if (!defined $self->{logfh}) {
-		return unless open($self->{logfh}, '>>', $path);
-		my $previous = select($self->{logfh});
-		$| = 1;
-		select($previous);
+	# One logger per process.  The line starts with the pid so that the
+	# processes that share a log (the one that spawned the backend, and the
+	# backend) can be told apart, and the pid is part of the format, so a
+	# logger inherited across fork() would name the wrong process.
+	if (!defined $self->{logger} || $self->{logger_pid} != $$) {
+		my $path = $self->{log} || ($self->{control} . '.log');
+
+		$self->{logger} = eval {
+			Log::Abstraction->new(
+				logger => $path,
+				level  => 'info',
+				format => "[$$] %timestamp% %message%",
+			);
+		};
+		$self->{logger_pid} = $$;
 	}
 
-	my @now = localtime;
-	# There is nowhere else to report a failure to log, so say whether it worked.
-	return printf({ $self->{logfh} } "[%d] %04d-%02d-%02d %02d:%02d:%02d %s\n",
-		$$, $now[5] + 1900, $now[4] + 1, $now[3], $now[2], $now[1], $now[0], $message)
-		? 1
-		: 0;
+	return 0 unless defined $self->{logger};
+
+	# Log::Abstraction keeps a message to one entry by putting a tab after
+	# each line break, so nothing in a message can pass for a new log line.
+	return eval { $self->{logger}->$level($message); 1 } ? 1 : 0;
 }
 
 1;
@@ -1397,7 +1415,8 @@ digest at all.  See L</SECURITY>.
 =item log
 
 Log file.  Defaults to the control path with C<.log> appended.  Every client
-the backend drops is written there with the reason it was dropped.
+the backend drops is written there with the reason it was dropped.  See
+L</LOG>.
 
 =item daemonize
 
@@ -1617,6 +1636,31 @@ Called by Perl when the backend object goes away.  It removes the socket file,
 but only if this object created it.  A backend that failed to start because
 another one was already serving never owned the socket, so it leaves the other
 backend's socket alone.  You do not call it yourself.
+
+=head1 LOG
+
+The backend writes its log with L<Log::Abstraction>.  Each message is one line:
+
+    [4242] 2026-11-25 10:44:55 serving on /run/user/1000/class-shared/class-shared.sock (pid 4242)
+
+That is the process id of the process that wrote it, the local date and time, and
+the message.  The pid is there because the process that starts a backend and the
+backend itself can write to the same file.  A line is written as soon as the
+event happens, so you can follow the log with C<tail -f>.
+
+A message that has more than one line has a tab put at the start of each line
+after the first, so that nothing in a message can look like the start of a new
+entry.  Percent signs in a message are written as they are.
+
+Normal events (starting, stopping, a shutdown request) are logged at C<info>.
+Clients that are dropped or refused are logged at C<warn>.  Failures of the
+backend itself (a file that cannot be removed, a reply that cannot be encoded,
+an internal error) are logged at C<error>.  All three are always written: there
+is no option to turn them down.
+
+If the log cannot be opened or written (for example its directory does not
+exist), the backend carries on without it.  The log is the place where failures
+are reported, so there is nowhere else to report this one.
 
 =head1 CONFIGURATION
 
@@ -1945,6 +1989,12 @@ configuration.
 L<Object::Configure> remembers where it found the file for a class.  Changing
 C<config_file> later in the same process may not be noticed.
 
+=item Log::Abstraction is not told where to log by your configuration.
+
+C<Object::Configure> would also accept a C<logger> setting, but the backend
+ignores it and always logs to C<log>, so that the file the clients and the CLI
+are told about is the file that is used.
+
 =item Loading the configuration modules costs a little start-up time.
 
 Roughly 0.1 seconds, which matters only if you start a backend very often.
@@ -1999,7 +2049,7 @@ variables.  Keep state in the object.
 =head1 SEE ALSO
 
 L<Class::Shared>, L<Class::Shared::Frontend>, L<Class::Shared::Protocol>,
-L<class-shared>, L<Object::Configure>, L<Params::Get>,
+L<class-shared>, L<Log::Abstraction>, L<Object::Configure>, L<Params::Get>,
 L<Params::Validate::Strict>.
 
 =head1 AUTHOR

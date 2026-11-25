@@ -56,6 +56,7 @@ WriteMakefile(
 		'Fcntl'            => 0,
 		'Getopt::Long'     => 0,
 		'IO::Socket::UNIX' => 0,
+		'Log::Abstraction' => '0.41',
 		'Object::Configure' => '0.26',
 		'Params::Get'      => '0.17',
 		'Params::Validate::Strict' => '0.43',
