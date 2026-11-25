@@ -213,4 +213,23 @@ is($third->shared_status->{objects}, 1, 'and holds exactly one');
 
 ok($third->shared_shutdown, 'the second backend shuts down too');
 
+# A token is for TCP: on a unix socket the mode 0600 file is the check, so
+# asking for both is a mistake worth naming.
+eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, token => 's3cret'); 1 };
+like($@, qr/a unix socket needs no token/, 'the frontend refuses a token on a unix socket');
+
+eval { Class::Shared::Backend->new(class => 'Shared::Counter', dir => $dir, token => 's3cret'); 1 };
+like($@, qr/a unix socket needs no token/, 'and so does the backend');
+
+# TLS is for TCP for the same reason: the kernel has already decided who may
+# connect to a 0600 socket, so a certificate there only looks like a defence.
+eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, tls_ca => 'ca.pem'); 1 };
+like($@, qr/a unix socket needs no TLS/, 'the frontend refuses TLS on a unix socket');
+
+eval { Class::Shared::Backend->new(class => 'Shared::Counter', dir => $dir, tls_cert => 'cert.pem'); 1 };
+like($@, qr/a unix socket needs no TLS/, 'and so does the backend');
+
+eval { Class::Shared::Frontend->new('Shared::Counter', dir => $dir, tls_fingerprint => ('ab' x 32)); 1 };
+like($@, qr/a unix socket needs no TLS/, 'and so does a pinned fingerprint');
+
 done_testing();

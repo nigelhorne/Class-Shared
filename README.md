@@ -77,36 +77,54 @@ useful when writing your own client.
     FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
     result would be too long for a `sockaddr_un`.
 
+- Class::Shared::normalise\_fingerprint($value)
+
+    Turns a certificate fingerprint into the form the TLS layer wants: `sha256$`
+    followed by 64 lower case hexadecimal digits.  Accepts what `openssl x509
+    \-fingerprint -sha256` prints, with colons and with or without the `sha256$`
+    prefix, and dies on anything that is not a SHA-256 digest of the right length.
+
 - Class::Shared::dir\_of($path)
 
     The directory part of `$path`.
 
-## Shared Secret
+## Transport Security
 
-A backend started with `token` (`--token-file` on the command line) only
-talks to clients that know the same secret, and every frame in both directions
-is signed with it.
+Authentication belongs to the transport, and the two transports are
+deliberately different.
 
-The signature is an HMAC-SHA-256 of the frame body, keyed with the secret, and
-it is checked before [Storable::thaw](https://metacpan.org/pod/Storable%3A%3Athaw) sees the body.  That order is the point:
-`thaw` will run code the sender chose, so a peer without the secret has to be
-stopped before deserialisation, not after it.  A frame that does not
-authenticate is refused and the connection dropped; a peer that can read the
-refusal learns only that the frame failed authentication, while one without
-the secret sees only [Storable](https://metacpan.org/pod/Storable) complaining about bytes that are not an
-image.
+A unix socket is created mode 0600 in a directory only its owner can write to,
+so the kernel has already decided who may connect: there is no token and no TLS,
+and no frame carries a digest.  The backend, the frontend and [class-shared](https://metacpan.org/pod/class-shared)
+refuse both for a unix socket rather than let either look like a defence.
 
-The secret keeps strangers off the socket; it encrypts nothing.  A TCP listener
-always has one, because the backend refuses to start one without a token: a
-port anybody can route to must not be a port where a stranger's bytes reach
-`thaw`.  The traffic itself is still readable by anyone who can watch it, so
-keep it on a private network or a tunnel.  See
-["SECURITY" in Class::Shared::Backend](https://metacpan.org/pod/Class%3A%3AShared%3A%3ABackend#SECURITY) and [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol) for the
-framing.
+TCP is the opposite case.  A port is reachable by anybody who can route to it,
+and treating a frame means running what the sender put in it, so a TCP listener
+is a TLS listener: it needs a certificate and its key to prove which backend it
+is, and a CA to check client certificates against, and it will not start without
+all three.  Clients must present a certificate that CA signed, and must verify
+the backend's certificate against the CA that signed it -- name included -- or
+against a pinned SHA-256 fingerprint of that one certificate, which stands in
+for both the CA and the name.  A client whose certificate the backend cannot
+verify is dropped during the handshake and never receives a frame.
+
+TLS answers who is on the other end and makes the bytes unreadable.  The token is
+kept on top of it, as a second and independent check: with a token every frame
+in both directions carries an HMAC-SHA-256 of its body, and the digest is
+verified before [Storable::thaw](https://metacpan.org/pod/Storable%3A%3Athaw) sees the body.  So a client that has a
+certificate but not the shared secret still cannot make the backend
+deserialise, and so run, bytes of its choosing.  The digest authenticates one
+frame; TLS authenticates the connection and encrypts it.  Both, because either
+one alone has been enough to lose a system.
+
+See ["SECURITY" in Class::Shared::Backend](https://metacpan.org/pod/Class%3A%3AShared%3A%3ABackend#SECURITY) for the backend's side of it and
+[Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol) for the framing.
 
 ## Limitations
 
-- A unix socket or plain TCP; there is nothing encrypted here.
+- A unix socket is not encrypted: file permissions decide who may connect, and
+anything that can read the socket can read the traffic on it.  TCP is always
+TLS, and has no unencrypted mode.
 - One backend per class, and it answers one call at a time, so a slow method
 delays every client of that class.
 - Each frontend is one connection: many objects in one process means many file

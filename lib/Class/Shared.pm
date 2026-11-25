@@ -49,6 +49,32 @@ sub read_secret {
 	return $secret;
 }
 
+# A SHA-256 fingerprint of a certificate, in the shape IO::Socket::SSL wants
+# for SSL_fingerprint.  Accepts the colon-separated form openssl prints, with
+# or without a "sha256$" prefix, so a pin can be pasted straight from
+# "openssl x509 -fingerprint -sha256".
+my $FINGERPRINT_RE = qr{
+	\A
+	(?: sha256 \$ )?
+	( (?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2} | [0-9A-Fa-f]{64} )
+	\z
+}x;
+
+sub normalise_fingerprint {
+	my ($value) = @_;
+
+	die "Class::Shared: no TLS fingerprint given\n"
+		unless defined $value && length $value;
+
+	my ($hex) = $value =~ $FINGERPRINT_RE
+		or die "Class::Shared: '$value' is not a SHA-256 certificate fingerprint: "
+			. "give 64 hexadecimal digits, optionally colon-separated\n";
+
+	$hex =~ s/://g;
+
+	return 'sha256$' . lc $hex;
+}
+
 sub dir_of {
 	my ($path) = @_;
 	my $dir = File::Basename::dirname($path);
@@ -220,34 +246,50 @@ Returns the socket path for C<$class>, mangling the name and appending an
 FNV-1a hash so that two classes cannot share a path by accident.  Dies if the
 result would be too long for a C<sockaddr_un>.
 
+=item Class::Shared::normalise_fingerprint($value)
+
+Turns a certificate fingerprint into the form the TLS layer wants: C<sha256$>
+followed by 64 lower case hexadecimal digits.  Accepts what C<openssl x509
+-fingerprint -sha256> prints, with colons and with or without the C<sha256$>
+prefix, and dies on anything that is not a SHA-256 digest of the right length.
+
 =item Class::Shared::dir_of($path)
 
 The directory part of C<$path>.
 
 =back
 
-=head1 SHARED SECRET
+=head1 TRANSPORT SECURITY
 
-A backend started with C<token> (C<--token-file> on the command line) only
-talks to clients that know the same secret, and every frame in both directions
-is signed with it.
+Authentication belongs to the transport, and the two transports are
+deliberately different.
 
-The signature is an HMAC-SHA-256 of the frame body, keyed with the secret, and
-it is checked before L<Storable::thaw> sees the body.  That order is the point:
-C<thaw> will run code the sender chose, so a peer without the secret has to be
-stopped before deserialisation, not after it.  A frame that does not
-authenticate is refused and the connection dropped; a peer that can read the
-refusal learns only that the frame failed authentication, while one without
-the secret sees only L<Storable> complaining about bytes that are not an
-image.
+A unix socket is created mode 0600 in a directory only its owner can write to,
+so the kernel has already decided who may connect: there is no token and no TLS,
+and no frame carries a digest.  The backend, the frontend and L<class-shared>
+refuse both for a unix socket rather than let either look like a defence.
 
-The secret keeps strangers off the socket; it encrypts nothing.  A TCP listener
-always has one, because the backend refuses to start one without a token: a
-port anybody can route to must not be a port where a stranger's bytes reach
-C<thaw>.  The traffic itself is still readable by anyone who can watch it, so
-keep it on a private network or a tunnel.  See
-L<Class::Shared::Backend/SECURITY> and L<Class::Shared::Protocol> for the
-framing.
+TCP is the opposite case.  A port is reachable by anybody who can route to it,
+and treating a frame means running what the sender put in it, so a TCP listener
+is a TLS listener: it needs a certificate and its key to prove which backend it
+is, and a CA to check client certificates against, and it will not start without
+all three.  Clients must present a certificate that CA signed, and must verify
+the backend's certificate against the CA that signed it -- name included -- or
+against a pinned SHA-256 fingerprint of that one certificate, which stands in
+for both the CA and the name.  A client whose certificate the backend cannot
+verify is dropped during the handshake and never receives a frame.
+
+TLS answers who is on the other end and makes the bytes unreadable.  The token is
+kept on top of it, as a second and independent check: with a token every frame
+in both directions carries an HMAC-SHA-256 of its body, and the digest is
+verified before L<Storable::thaw> sees the body.  So a client that has a
+certificate but not the shared secret still cannot make the backend
+deserialise, and so run, bytes of its choosing.  The digest authenticates one
+frame; TLS authenticates the connection and encrypts it.  Both, because either
+one alone has been enough to lose a system.
+
+See L<Class::Shared::Backend/SECURITY> for the backend's side of it and
+L<Class::Shared::Protocol> for the framing.
 
 =head1 LIMITATIONS
 
@@ -255,7 +297,9 @@ framing.
 
 =item *
 
-A unix socket or plain TCP; there is nothing encrypted here.
+A unix socket is not encrypted: file permissions decide who may connect, and
+anything that can read the socket can read the traffic on it.  TCP is always
+TLS, and has no unencrypted mode.
 
 =item *
 

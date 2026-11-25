@@ -4,7 +4,6 @@ use strict;
 use warnings;
 
 use Getopt::Long qw(GetOptions);
-use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
@@ -23,6 +22,10 @@ my %opt = (
 	host       => undef,
 	port       => undef,
 	token_file => undef,
+	tls_cert   => undef,
+	tls_key    => undef,
+	tls_ca     => undef,
+	tls_fingerprint => undef,
 	log        => undef,
 	foreground => 0,
 	help       => 0,
@@ -37,6 +40,10 @@ my $options_ok = GetOptions(
 	'host=s'       => \$opt{host},
 	'port=i'       => \$opt{port},
 	'token-file=s' => \$opt{token_file},
+	'tls-cert=s'   => \$opt{tls_cert},
+	'tls-key=s'    => \$opt{tls_key},
+	'tls-ca=s'     => \$opt{tls_ca},
+	'tls-fingerprint=s' => \$opt{tls_fingerprint},
 	'log=s'        => \$opt{log},
 	'foreground|f' => \$opt{foreground},
 	'help|h'       => \$opt{help},
@@ -87,6 +94,7 @@ sub serve {
 			host      => $host,
 			port      => $port,
 			token     => token(),
+			tls_options($host, 'server'),
 			dir       => $opt{dir},
 			log       => $opt{log},
 			daemonize => $opt{foreground} ? 0 : 1,
@@ -210,7 +218,63 @@ sub log_path_for {
 
 sub token {
 	return undef unless defined $opt{token_file} && length $opt{token_file};
+
+	# A unix socket is mode 0600 in a directory only its owner can write to, so
+	# the kernel has already decided who may connect.
+	my ($host) = tcp_endpoint();
+	fatal('a unix socket needs no token: its mode 0600 file already decides who may connect')
+		unless defined $host;
+
 	return Class::Shared::read_secret($opt{token_file});
+}
+
+sub tls_options {
+	my ($host, $role) = @_;
+
+	my %tls = map { $_ => $opt{$_} } qw(tls_cert tls_key tls_ca tls_fingerprint);
+
+	if (!defined $host) {
+		fatal('a unix socket needs no TLS: its mode 0600 file already decides who may connect')
+			if grep { defined $tls{$_} && length $tls{$_} } keys %tls;
+		return ();
+	}
+
+	if ($role eq 'server') {
+		fatal('--tls-fingerprint is for clients: a listener verifies its clients '
+			. 'with --tls-ca')
+			if defined $tls{tls_fingerprint} && length $tls{tls_fingerprint};
+
+		fatal('a TCP listener needs --tls-cert, --tls-key and --tls-ca: without them '
+			. 'the traffic would be readable to anyone who can route to it')
+			if grep { !defined $tls{$_} || !length $tls{$_} } qw(tls_cert tls_key tls_ca);
+
+		delete $tls{tls_fingerprint};
+
+		return %tls;
+	}
+
+	fatal('a TCP client needs --tls-cert and --tls-key: the backend verifies its '
+		. 'clients and will not accept one it cannot verify')
+		if grep { !defined $tls{$_} || !length $tls{$_} } qw(tls_cert tls_key);
+
+	my $has_ca  = defined $tls{tls_ca} && length $tls{tls_ca};
+	my $has_pin = defined $tls{tls_fingerprint} && length $tls{tls_fingerprint};
+
+	fatal('a TCP client needs --tls-ca or --tls-fingerprint: without one it cannot '
+		. 'verify the backend')
+		unless $has_ca || $has_pin;
+
+	fatal('give --tls-ca or --tls-fingerprint, not both: a CA and a pin are '
+		. 'alternatives')
+		if $has_ca && $has_pin;
+
+	if ($has_pin) {
+		$tls{tls_fingerprint} = Class::Shared::normalise_fingerprint($tls{tls_fingerprint});
+	} else {
+		delete $tls{tls_fingerprint};
+	}
+
+	return %tls;
 }
 
 sub talk {
@@ -218,22 +282,47 @@ sub talk {
 
 	my ($host, $port) = tcp_endpoint();
 	my $secret = token();
+	my %tls = tls_options($host, 'client');
 
-	my $sock = defined $host
-		? IO::Socket::INET->new(
+	my ($sock, $where);
+
+	if (defined $host) {
+		require IO::Socket::SSL;
+
+		my %ssl = (
+			SSL_cert_file   => $tls{tls_cert},
+			SSL_key_file    => $tls{tls_key},
+			SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+		);
+
+		if (defined $tls{tls_fingerprint}) {
+			# A pin names one exact certificate, so it replaces the CA
+			# and the name, and nothing else can accept the peer.
+			$ssl{SSL_fingerprint}       = $tls{tls_fingerprint};
+			$ssl{SSL_force_fingerprint} = 1;
+			$ssl{SSL_verifycn_scheme}   = 'none';
+		} else {
+			$ssl{SSL_ca_file} = $tls{tls_ca};
+		}
+
+		$where = "$host:$port";
+		$sock = IO::Socket::SSL->new(
 			PeerAddr => $host,
 			PeerPort => $port,
 			Proto    => 'tcp',
 			Timeout  => 5,
-		)
-		: do {
-			my $socket = socket_path_for($class);
-			IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $socket);
-		};
+			%ssl,
+		);
 
-	if (!$sock) {
-		my $where = defined $host ? "$host:$port" : socket_path_for($class);
-		return (undef, "no backend for $class at $where: $!");
+		if (!$sock) {
+			my $why = IO::Socket::SSL::errstr();
+			$why = "$!" unless defined $why && length $why;
+			return (undef, "no backend for $class at $where: TLS failed: $why");
+		}
+	} else {
+		$where = socket_path_for($class);
+		$sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $where);
+		return (undef, "no backend for $class at $where: $!") unless $sock;
 	}
 
 	my ($hello, $hello_error) = exchange($sock, {
@@ -241,7 +330,6 @@ sub talk {
 		proto => $Class::Shared::PROTOCOL_VERSION,
 		class => $class,
 		pid   => $$,
-		token => $secret,
 		}, $secret);
 
 	if (!$hello) {
@@ -337,7 +425,13 @@ Options:
   --listen ADDR    tcp:HOST:PORT to serve remote clients
   --host HOST      TCP address, with --port
   --port PORT      TCP port, with --host
-  --token-file F   the shared secret; required for a TCP listener
+  --token-file F   the shared secret; TCP only, and required there
+  --tls-cert FILE  this side's certificate; TCP only, and required there
+  --tls-key FILE   the private key for --tls-cert; TCP only
+  --tls-ca FILE    the CA that signs the other side's certificate; TCP only
+  --tls-fingerprint HEX
+                   pin the backend's SHA-256 fingerprint instead of a CA; the
+                   client commands only
   --log PATH       backend log file (default: SOCKET.log)
   -f, --foreground stay in the foreground (serve)
   -h, --help       this message
@@ -347,7 +441,10 @@ Examples:
   $program serve  --class Class::Simple -f
   $program status --class Class::Simple
   $program serve  --class Class::Simple --listen tcp:0.0.0.0:7000 \\
-                  --token-file /etc/class-shared/token
+                  --token-file /etc/class-shared/token \\
+                  --tls-cert /etc/class-shared/server.pem \\
+                  --tls-key /etc/class-shared/server-key.pem \\
+                  --tls-ca /etc/class-shared/clients-ca.pem
 USAGE
 
 	exit $status;
@@ -363,7 +460,8 @@ class-shared - start, inspect and stop a Class::Shared backend
 
     class-shared serve  --class Class::Simple [-f] [--dir DIR | --socket PATH]
     class-shared serve  --class Class::Simple --listen tcp:HOST:PORT \
-                        --token-file FILE
+                        --token-file FILE --tls-cert CERT --tls-key KEY \
+                        --tls-ca CA
     class-shared status --class Class::Simple [--dir DIR | --socket PATH]
     class-shared stop   --class Class::Simple
     class-shared path   --class Class::Simple [--dir DIR | --socket PATH]
@@ -393,7 +491,10 @@ its log file, C<--log> or the socket path with C<.log> appended, in the
 foreground as well.
 
 The transport is a unix socket unless C<--listen>, C<--host> or C<--port> asks
-for TCP.  A TCP listener needs C<--token-file> and refuses to start without it.
+for TCP.  A TCP listener is a TLS listener with client certificates: it needs
+C<--tls-cert>, C<--tls-key>, C<--tls-ca> and C<--token-file>, and refuses to
+start without any of them.  A unix socket takes none of them, because its mode
+0600 file already decides who may connect.
 
 =item status
 
@@ -454,13 +555,39 @@ machine.
 
 =item --token-file FILE
 
-The shared secret, read from C<FILE>.  Every frame in both directions then
-carries the secret's HMAC, and the backend checks that digest before it thaws
-anything, so a peer without the secret cannot have the backend run code of its
-choosing.
+The shared secret for a TCP listener, read from C<FILE>.  Every frame in both
+directions then carries the secret's HMAC, and the backend checks that digest
+before it thaws anything, so a peer without the secret cannot have the backend
+run code of its choosing.  It is a second check, on top of TLS.
 
-A TCP listener requires it.  C<status> and C<stop> must be given the same file,
-or they cannot authenticate to a backend that has one; see L</TOKENS>.
+A TCP listener requires it, and C<status> and C<stop> must be given the same
+file or they cannot authenticate to a backend that has one; see L</TOKENS>.  A
+unix socket takes none -- its mode 0600 file already decides who may connect --
+and this command refuses the option for one.
+
+=item --tls-cert FILE, --tls-key FILE
+
+The certificate this side presents and its private key: the backend's for
+C<serve>, this client's for C<status> and C<stop>.  Both are required for TCP.
+The backend's certificate must name the address clients use, because they check
+the name as well as the chain.  See L</TLS>.
+
+=item --tls-ca FILE
+
+PEM file of the CA the other side's certificate must chain to.  For C<serve>
+that is the CA that signs clients' certificates, and a client signed by any
+other CA is dropped during the handshake; for C<status> and C<stop> it is the CA
+that signed the backend's certificate.  Required for a TCP listener, and for the
+client commands unless C<--tls-fingerprint> pins the backend instead.
+
+=item --tls-fingerprint HEX
+
+The SHA-256 fingerprint of the backend's certificate, as
+C<openssl x509 -in server.pem -noout -fingerprint -sha256> prints it: colons are
+optional, as is a C<sha256$> prefix, and the case does not matter.  It replaces
+C<--tls-ca> in C<status> and C<stop>, and accepts that exact certificate
+whatever its name or signer.  A listener cannot use it: clients are verified
+with C<--tls-ca>, not pinned.
 
 =item --log PATH
 
@@ -484,8 +611,14 @@ Print the version and exit.
 
 =head1 TOKENS
 
-C<status> and C<stop> sign their requests when C<--token-file> is given, the
-way a frontend does, and a backend with a token refuses any frame it cannot
+C<status> and C<stop> verify the backend -- against C<--tls-ca> or the pinned
+C<--tls-fingerprint> -- and present their own certificate before any of this, so
+over TCP the TLS handshake comes first and a failure
+there is reported as such: the command never sends a frame to a backend it could
+not verify, and a backend that rejects its certificate gives it nothing.
+
+Once connected, they sign their requests when C<--token-file> is given, the way
+a frontend does, and a backend with a token refuses any frame it cannot
 authenticate: the wrong secret is reported as a frame that failed
 authentication, and no C<--token-file> at all leaves the request unsigned, so
 the backend refuses it and drops the connection.
@@ -498,6 +631,20 @@ image.  That makes a poor first line for an error, so the message leads with
 
 and keeps the complaint on a C<detail:> line, for when the cause was something
 else.  L<Class::Shared::Frontend> makes the same guess when it has no token.
+
+=head1 TLS
+
+TCP has no unencrypted mode.  C<serve> needs a certificate and key of its own
+and the CA that signs its clients, and it verifies those clients mandatorily: a
+connection that presents nothing, or a certificate from another CA, is dropped
+during the handshake and logged, and never gets as far as a frame.
+
+C<status> and C<stop> need the same three options from the client's side: the
+certificate and key the backend is configured to accept, and either the
+backend's CA or its pinned fingerprint.  Verification is not optional; with a
+CA it includes the certificate's name, so connect with the address or hostname
+the backend's certificate is for, while a pin identifies the certificate itself
+and asks for nothing else.
 
 =head1 EXIT STATUS
 

@@ -5,7 +5,6 @@ use warnings;
 
 use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_CREAT);
 use File::Spec ();
-use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
@@ -43,9 +42,28 @@ sub new {
 		die "Class::Shared::Backend->new: a TCP listener needs a token: "
 			. "without one it would thaw whatever arrives\n"
 			unless defined $token && length $token;
+
+		# TLS is not a wrapper here but the listener itself: this certificate
+		# proves who the backend is, tls_ca decides which client certificates
+		# are welcome, and a client without one is never accepted.
+		die "Class::Shared::Backend->new: a TCP listener needs tls_cert, "
+			. "tls_key and tls_ca: without them the traffic would be readable "
+			. "to anyone who can route to it\n"
+			if grep { !defined $opt{$_} || !length $opt{$_} } qw(tls_cert tls_key tls_ca);
 	} else {
 		$socket = Class::Shared::socket_path($target, $opt{dir})
 			unless defined $socket;
+
+		# The socket is mode 0600 in a directory only its owner can write to,
+		# so the kernel has already decided who may connect: a digest on every
+		# frame would buy nothing here and cost 32 bytes on each message.
+		die "Class::Shared::Backend->new: a unix socket needs no token: "
+			. "its mode 0600 file already decides who may connect\n"
+			if defined $opt{token} && length $opt{token};
+
+		die "Class::Shared::Backend->new: a unix socket needs no TLS: "
+			. "its mode 0600 file already decides who may connect\n"
+			if grep { defined $opt{$_} && length $opt{$_} } qw(tls_cert tls_key tls_ca);
 	}
 
 	my $control = defined $socket
@@ -58,6 +76,9 @@ sub new {
 		host          => $host,
 		port          => $port,
 		token         => $opt{token},
+		tls_cert      => $opt{tls_cert},
+		tls_key       => $opt{tls_key},
+		tls_ca        => $opt{tls_ca},
 		dir_hint      => $opt{dir},
 		control       => $control,
 		log           => $opt{log} || ($control . '.log'),
@@ -104,7 +125,8 @@ sub run {
 	}
 
 	$self->_log("serving $self->{class} on $self->{address} (pid $$"
-		. ($self->{token} ? ', token required' : '') . ')');
+		. ($self->{token} ? ', token required' : '')
+		. (defined $self->{host} ? ', TLS with client certificates' : '') . ')');
 
 	$self->_loop;
 	$self->_cleanup;
@@ -213,20 +235,31 @@ sub _setup_tcp {
 	die "Class::Shared::Backend: no TCP address configured\n"
 		unless defined $self->{host} && defined $self->{port};
 
-	my $listener = IO::Socket::INET->new(
-		LocalAddr => $self->{host},
-		LocalPort => $self->{port},
-		Proto     => 'tcp',
-		Listen    => 64,
-		ReuseAddr => 1,
-	) or die "cannot listen on $self->{host}:$self->{port}: $!\n";
+	# Loaded only for a TCP listener: a unix socket never pays for TLS, just
+	# as it never paid for the digest.
+	require IO::Socket::SSL;
+
+	# The listener is the TLS endpoint, not something wrapped around one: the
+	# handshake happens inside accept(), so a client that cannot show a
+	# certificate signed by tls_ca never becomes a connection in the loop.
+	# Timeout bounds a peer that connects and then says nothing.
+	my $listener = IO::Socket::SSL->new(
+		LocalAddr       => $self->{host},
+		LocalPort       => $self->{port},
+		Proto           => 'tcp',
+		Listen          => 64,
+		ReuseAddr       => 1,
+		Timeout         => 5,
+		SSL_cert_file   => $self->{tls_cert},
+		SSL_key_file    => $self->{tls_key},
+		SSL_ca_file     => $self->{tls_ca},
+		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER()
+			| IO::Socket::SSL::SSL_VERIFY_FAIL_IF_NO_PEER_CERT(),
+	) or die "cannot listen on $self->{host}:$self->{port}: "
+		. (IO::Socket::SSL::errstr() || "$!" || 'unknown error') . "\n";
 
 	$self->{listener} = $listener;
 	$self->{address} = $self->{host} . ':' . $self->{port};
-
-	# Reachable from off this machine, so say so in the log even though every
-	# frame is authenticated: the bytes themselves are still in the clear.
-	$self->_log('this listener is not encrypted; keep it on a trusted network or a tunnel');
 
 	return 1;
 }
@@ -275,7 +308,18 @@ sub _accept {
 	my $self = shift;
 
 	my $fh = $self->{listener}->accept;
-	return unless $fh;
+
+	if (!$fh) {
+		# Over TCP this is a handshake that failed: no certificate, one from
+		# a CA we do not trust, or a client that never spoke TLS.  There is
+		# nobody to send a frame to, so just record it.
+		if (defined $self->{host}) {
+			my $why = IO::Socket::SSL::errstr();
+			$self->_log("refused a TLS connection: $why")
+				if defined $why && length $why;
+		}
+		return;
+	}
 
 	if (keys %{$self->{clients}} >= $self->{max_clients}) {
 		# Signed like every other frame, because the client will check the
@@ -430,13 +474,6 @@ sub _dispatch {
 
 sub _op_hello {
 	my ($self, $client, $message) = @_;
-
-	if (defined $self->{token}) {
-		my $given = defined $message->{token} ? $message->{token} : '';
-		if ($given ne $self->{token}) {
-			return { ok => 0, kind => 'auth', error => 'bad or missing token' };
-		}
-	}
 
 	my $proto = defined $message->{proto} ? $message->{proto} : 0;
 
@@ -735,10 +772,13 @@ Class::Shared::Backend - load a class once and serve objects made from it
 
     # On another machine:
     Class::Shared::Backend->new(
-        class => 'Class::Simple',
-        host  => '0.0.0.0',
-        port  => 7000,
-        token => $secret,
+        class    => 'Class::Simple',
+        host     => '0.0.0.0',
+        port     => 7000,
+        tls_cert => '/etc/class-shared/server.pem',
+        tls_key  => '/etc/class-shared/server-key.pem',
+        tls_ca   => '/etc/class-shared/clients-ca.pem',
+        token    => $secret,
     )->run;
 
 =head1 DESCRIPTION
@@ -769,14 +809,31 @@ C<host>/C<port>, not both.
 
 =item host, port
 
-Listen on TCP instead of a unix socket.  C<host> may be C<127.0.0.1> for local
-use or an address of this machine to accept remote clients.
+Listen on TCP instead of a unix socket, over TLS.  C<host> may be C<127.0.0.1>
+for local use or an address of this machine to accept remote clients.  A TCP
+listener needs C<tls_cert>, C<tls_key>, C<tls_ca> and a C<token>; see
+L</TLS>.
+
+=item tls_cert, tls_key
+
+The certificate and private key this listener presents to clients.  The
+certificate has to name the address clients use, because they check the name as
+well as the chain.
+
+=item tls_ca
+
+PEM file of the CA, or CAs, that clients' certificates must chain to.  Client
+certificates are mandatory: a client that presents none, or one signed by
+another CA, is dropped during the handshake.
 
 =item token
 
-A shared secret.  Every frame in both directions is authenticated with it, and
-a frame is thawed only after its digest has been checked.  Required for a TCP
-listener, which refuses to start without one; see L</SECURITY>.
+The shared secret for a TCP listener, which refuses to start without one and
+refuses to accept a frame it cannot authenticate.  It is kept even though the
+connection is already TLS: the token checks each frame, the certificate checks
+the connection, and neither replaces the other.  A unix socket takes no token:
+its mode 0600 file already decides who may connect, so its frames carry no
+digest at all.  See L</SECURITY>.
 
 =item log
 
@@ -840,9 +897,8 @@ frame; see L<Class::Shared::Protocol>.  Clients must start with C<hello>.
 
 =item hello
 
-C<{ op =E<gt> 'hello', proto =E<gt> 1, class =E<gt> 'Class::Simple', token
-=E<gt> $secret }>.  The token, if the backend has one, and the class name must
-match.  The reply carries the backend's pid and version.
+C<{ op =E<gt> 'hello', proto =E<gt> 2, class =E<gt> 'Class::Simple' }>.  The
+class name must match.  The reply carries the backend's pid and version.
 
 =item new
 
@@ -870,24 +926,48 @@ exits.
 
 =head1 SECURITY
 
-A unix socket is created mode 0600 in a directory only the user can write to.
+A unix socket is created mode 0600 in a directory only the owner can write to.
+That is the whole of its authentication, so it takes neither a token nor TLS,
+and its frames carry no digest.
 
-A TCP listener is plain, unencrypted, and always authenticated: it will not
-start without a C<token>, because a port that anybody can route to must not be
-a port where a stranger's bytes reach L<Storable::thaw>.  Even with a token the
-traffic is readable by anyone who can watch it, so put it on a private network,
-or a tunnel, if that matters.
+A TCP listener is a TLS endpoint with client certificates: it needs
+C<tls_cert>/C<tls_key> to prove which backend it is, and C<tls_ca> to decide
+which clients are welcome.  Verification of the client is mandatory
+(C<SSL_VERIFY_FAIL_IF_NO_PEER_CERT>), so a client that presents no certificate,
+or one signed by another CA, is dropped inside C<accept> and never becomes a
+connection with a buffer or an object.  The rejection is logged; there is
+nobody to send an explanation to, because they have not been authenticated.
 
-With a token, every frame carries an HMAC-SHA-256 of its body, keyed with the
-token, and the digest is verified before L<Storable::thaw> is given any of the
-frame.  That order is what makes the token a guard rather than a comment:
-C<thaw> runs code of the sender's choosing, so a peer without the secret is
-stopped before deserialisation, not after it.  A wrong or missing digest ends
-that connection.  The refusal is signed like any other frame, so a peer that
-does not hold the secret cannot read it either.
+It also needs a C<token>.  With one, every frame carries an HMAC-SHA-256 of its
+body, keyed with the token, and the digest is verified before L<Storable::thaw>
+is given any of the frame.  That order is what makes the token a guard rather
+than a comment: C<thaw> runs code of the sender's choosing, so a peer without
+the secret is stopped before deserialisation, not after it.  A wrong or missing
+digest ends that connection.  The refusal is signed like any other frame, so a
+peer that does not hold the secret cannot read it either.
 
-A unix socket needs no token: it is created mode 0600 in a directory only the
-owner can write to.
+So the two checks answer different questions.  TLS says which machine is
+calling and keeps what it sends private; the token says whether the frame in
+front of us was built by somebody who knows the secret.  A stolen certificate is
+not a stolen secret, and a leaked secret does not let anybody read the traffic.
+
+A unix socket needs no token, and takes none: it is created mode 0600 in a
+directory only the owner can write to, so the kernel has already decided who
+may connect and its frames carry no digest.
+
+=head1 TLS
+
+TCP is TLS; there is no unencrypted TCP mode.  C<new> refuses a C<host>/C<port>
+listener without C<tls_cert>, C<tls_key> and C<tls_ca>, the same way it refuses
+one without a token, so a port cannot be opened in the clear by forgetting an
+argument.
+
+The certificate has to name the address clients connect to: a frontend given a
+C<tls_ca> checks the name as well as the chain, so an address- or hostname-based
+certificate for C<classhost.example.com> is the one to issue for a backend
+reached at that name.  A frontend given a C<tls_fingerprint> instead pins this
+exact certificate by digest, in which case the name and the signer (a private
+CA, or none at all) do not have to satisfy anybody.
 
 =head1 AUTHOR
 

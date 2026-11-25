@@ -27,6 +27,7 @@ WriteMakefile(
 	},
 	TEST_REQUIRES    => {
 		'File::Temp'          => 0,
+		'IO::Socket::SSL'     => 0,
 		'Lingua::Conjunction' => 0,
 		'Test::More'          => '0.98',
 	},
@@ -35,6 +36,13 @@ WriteMakefile(
 			version => 2,
 		},
 		prereqs => {
+			runtime => {
+				# Loaded only when a TCP listener or client is used;
+				# a unix socket never needs it.
+				recommends => {
+					'IO::Socket::SSL' => '2.0',
+				},
+			},
 			develop => {
 				requires => {
 					# Needed only to regenerate README.md from the POD.

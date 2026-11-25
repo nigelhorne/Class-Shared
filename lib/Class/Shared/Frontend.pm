@@ -5,7 +5,6 @@ use warnings;
 
 use Fcntl qw(:flock O_RDWR O_CREAT);
 use File::Spec ();
-use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
 
@@ -21,6 +20,7 @@ our $AUTOLOAD;
 
 my %KNOWN_OPTION = map { $_ => 1 } qw(
 	class ctor socket dir host port token token_file autostart timeout log
+	tls_cert tls_key tls_ca tls_fingerprint
 );
 
 # One frontend stands for one object.  The object itself lives in the backend,
@@ -58,16 +58,48 @@ sub new {
 		die "Class::Shared::Frontend->new: ctor must be an array ref\n";
 	}
 
+	my $transport = (defined $opt{host} || defined $opt{port}) ? 'tcp' : 'unix';
+
+	# A unix socket is mode 0600 in a directory only its owner can write to, so
+	# the kernel has already decided who may connect: a token would add 32 bytes
+	# to every frame and buy nothing.
+	die "Class::Shared::Frontend->new: a unix socket needs no token: "
+		. "its mode 0600 file already decides who may connect\n"
+		if $transport eq 'unix'
+			&& (defined $opt{token} || defined $opt{token_file});
+
+	die "Class::Shared::Frontend->new: a unix socket needs no TLS: "
+		. "its mode 0600 file already decides who may connect\n"
+		if $transport eq 'unix'
+			&& grep { defined $opt{$_} && length $opt{$_} }
+				qw(tls_cert tls_key tls_ca tls_fingerprint);
+
 	my $token = $opt{token};
 	$token = Class::Shared::read_secret($opt{token_file}) if defined $opt{token_file};
-
-	my $transport = (defined $opt{host} || defined $opt{port}) ? 'tcp' : 'unix';
 
 	if ($transport eq 'tcp') {
 		die "Class::Shared::Frontend->new: a TCP backend needs both host and port\n"
 			unless defined $opt{host} && defined $opt{port};
 		die "Class::Shared::Frontend->new: use either socket or host/port, not both\n"
 			if defined $opt{socket};
+
+		# Verification is not optional, and neither is proving who we are:
+		# tls_cert/tls_key are the certificate the backend will accept from
+		# this client, and tls_ca or tls_fingerprint says how to be sure the
+		# backend is the one we meant.
+		die "Class::Shared::Frontend->new: a TCP backend needs tls_cert and tls_key: "
+			. "the backend will not accept a client it cannot verify\n"
+			if grep { !defined $opt{$_} || !length $opt{$_} } qw(tls_cert tls_key);
+
+		die "Class::Shared::Frontend->new: a TCP backend needs tls_ca or "
+			. "tls_fingerprint: without one it cannot verify the backend\n"
+			unless (defined $opt{tls_ca} && length $opt{tls_ca})
+				|| (defined $opt{tls_fingerprint} && length $opt{tls_fingerprint});
+
+		die "Class::Shared::Frontend->new: give tls_ca or tls_fingerprint, "
+			. "not both: a CA and a pin are alternatives\n"
+			if (defined $opt{tls_ca} && length $opt{tls_ca})
+				&& (defined $opt{tls_fingerprint} && length $opt{tls_fingerprint});
 	}
 
 	my $socket_path = $transport eq 'unix'
@@ -81,6 +113,12 @@ sub new {
 		host        => $opt{host},
 		port        => $opt{port},
 		token       => $token,
+		tls_cert    => $opt{tls_cert},
+		tls_key     => $opt{tls_key},
+		tls_ca      => $opt{tls_ca},
+		tls_fingerprint => (defined $opt{tls_fingerprint} && length $opt{tls_fingerprint})
+			? Class::Shared::normalise_fingerprint($opt{tls_fingerprint})
+			: undef,
 		ctor        => $opt{ctor} || [],
 		autostart   => exists $opt{autostart} ? $opt{autostart} : 1,
 		timeout     => defined $opt{timeout} ? $opt{timeout} : $DEFAULT_TIMEOUT,
@@ -329,15 +367,44 @@ sub _open {
 	my $self = shift;
 
 	if ($self->{transport} eq 'tcp') {
-		my $sock = IO::Socket::INET->new(
+		# Loaded only here, so a client of a unix socket still runs none of
+		# this.  Verification is mandatory: a certificate that does not chain
+		# to tls_ca and name this backend, or whose digest is not the pinned
+		# one, is not a connection.
+		require IO::Socket::SSL;
+
+		my %tls = (
+			SSL_cert_file   => $self->{tls_cert},
+			SSL_key_file    => $self->{tls_key},
+			SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+		);
+
+		if (defined $self->{tls_fingerprint}) {
+			# A pin names one exact certificate, so it stands in for both the
+			# CA and the name.  SSL_force_fingerprint makes the digest the
+			# only thing that can accept the peer, rather than a fallback for
+			# a chain that failed.
+			$tls{SSL_fingerprint}       = $self->{tls_fingerprint};
+			$tls{SSL_force_fingerprint} = 1;
+			$tls{SSL_verifycn_scheme}   = 'none';
+		} else {
+			$tls{SSL_ca_file} = $self->{tls_ca};
+		}
+
+		my $sock = IO::Socket::SSL->new(
 			PeerAddr => $self->{host},
 			PeerPort => $self->{port},
 			Proto    => 'tcp',
 			Timeout  => $self->{timeout},
+			%tls,
 		);
 
-		$self->{last_error} = "cannot connect to " . $self->shared_address . ": $!"
-			unless $sock;
+		if (!$sock) {
+			my $why = IO::Socket::SSL::errstr();
+			$why = "$!" unless defined $why && length $why;
+			$self->{last_error} = "cannot connect to " . $self->shared_address
+				. " over TLS: $why";
+		}
 
 		return $sock;
 	}
@@ -364,7 +431,6 @@ sub _greet {
 		proto => $Class::Shared::PROTOCOL_VERSION,
 		class => $self->{class},
 		pid   => $$,
-		token => $self->{token},
 	});
 
 	if (!defined $response) {
@@ -589,10 +655,13 @@ Class::Shared::Frontend - a stand-in for one object that lives in a backend
 
     my $answer = $simple->do_something($arg);
 
-    # A backend on another machine:
+    # A backend on another machine, reached over TLS:
     my $remote = Class::Shared::Frontend->new('Class::Simple',
         host       => 'classhost.example.com',
         port       => 7000,
+        tls_ca     => '/etc/class-shared/server-ca.pem',
+        tls_cert   => '/etc/class-shared/client.pem',
+        tls_key    => '/etc/class-shared/client-key.pem',
         token_file => '/etc/class-shared/token',
         ctor       => [verbose => 1],
     );
@@ -639,17 +708,41 @@ An explicit unix socket path, overriding C<dir> and the derived name.
 
 =item host, port
 
-Talk to a TCP backend on another machine.  Both are required together, and
-neither may be combined with C<socket>.  Autostarting does not apply.
+Talk to a TCP backend on another machine, over TLS.  Both are required together,
+and neither may be combined with C<socket>.  Autostarting does not apply.
+C<tls_cert> and C<tls_key> are required with them, and so is one of C<tls_ca> or
+C<tls_fingerprint>.
+
+=item tls_ca, tls_fingerprint
+
+How the backend is verified.  One of the two is required for TCP and there is no
+way to switch verification off: a backend that does not verify is not a backend.
+
+C<tls_ca> is a PEM file of the CA that signed the backend's certificate, and the
+certificate must also name C<host>.  C<tls_fingerprint> is the SHA-256 digest of
+that one certificate, as C<openssl x509 -in server.pem -noout -fingerprint
+-sha256> prints it (colons and all, with or without a C<sha256$> prefix); a
+pinned backend is accepted for its digest alone, whatever it is called and
+whoever signed it, so a self-signed certificate and an address that does not
+match its name are both fine.
+
+Give one or the other, not both: a CA and a pin are alternatives.
+
+=item tls_cert, tls_key
+
+The certificate and private key this client presents.  The backend verifies
+clients, so a connection without one is refused during the handshake and this
+frontend gets no object.
 
 =item token, token_file
 
-A shared secret.  Every frame in both directions is authenticated with it, and
-the backend checks the digest before it deserialises anything; a frontend whose
-token is wrong is refused at the handshake and gets no object.  A TCP backend
-always has one, since it will not start without a token.  Prefer C<token_file>;
-a secret passed as C<token> is visible to anything that can read this process's
-memory or command line.
+The shared secret, needed only for a TCP backend, which will not start without
+one and refuses a frame it cannot authenticate; a frontend whose token is wrong
+is refused at the handshake and gets no object.  It is a second check on top of
+TLS, not a replacement for it.  A unix socket takes none -- its mode 0600 file
+already decides who may connect -- and C<new> dies if one is given.  Prefer
+C<token_file>; a secret passed as C<token> is visible to anything that can read
+this process's memory or command line.
 
 =item autostart
 

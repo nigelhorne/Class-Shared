@@ -9,12 +9,20 @@ Revision history for Class-Shared
         - Objects belong to the connection that created them, so a client that
           exits or crashes takes nothing with it and leaks nothing.
         - Framing and Storable serialisation in Class::Shared::Protocol.
-        - Optional shared secret: when a token is set, every frame carries an
-          HMAC-SHA-256 of its body and the digest is verified before the frame
-          is thawed, so a peer without the secret can no longer have the
-          backend deserialise -- and so run -- bytes it chose.  Plain frames
-          are protocol 1; authenticated ones are protocol 2.
-        - Optional shared secret for unix sockets, required for TCP: the
-          backend refuses to start a TCP listener without one, so nothing is
-          ever thawed for a peer that has not authenticated.
+        - Shared secret for TCP only: a TCP listener refuses to start without
+          one, so nothing is ever thawed for a peer that has not authenticated,
+          and when a token is set every frame carries an HMAC-SHA-256 of its
+          body whose digest is verified before the frame is thawed, so a peer
+          without the secret can no longer have the backend deserialise -- and
+          so run -- bytes it chose.  Plain frames are protocol 1; authenticated
+          ones are protocol 2.  A unix socket takes no token: its mode 0600
+          file already decides who may connect, so its frames carry no digest.
+        - TCP runs over TLS with verification at both ends: a listener needs
+          a certificate, its key and a CA for client certificates, and drops
+          any client it cannot verify during the handshake; a frontend or
+          command line client verifies the backend either against a CA file
+          (name included) or against a pinned SHA-256 fingerprint of its
+          certificate, and presents its own.  The token stays as a second, independent
+          check on every frame, so a certificate is not a substitute for the
+          secret and the secret is not a substitute for the certificate.
         - bin/class-shared for serve, status, stop and path.
