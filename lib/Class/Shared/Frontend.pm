@@ -419,6 +419,15 @@ sub _open {
 	$self->{last_error} = "no socket at $path";
 	return undef unless -S $path;
 
+	# Whatever comes back over this socket is thawed, so it must be ours: a
+	# directory another user can write to, or a socket another user made, would
+	# let that user answer every call and read every argument.
+	my ($safe, $why) = Class::Shared::_check_endpoint($path);
+	if (!$safe) {
+		$self->{last_error} = "will not connect to $path: $why";
+		return undef;
+	}
+
 	# The built-in socket and connect, not IO::Socket::UNIX: that module brings
 	# IO::Socket, IO::Socket::INET and IO::Handle with it, about 1.2 MB and 16
 	# ms in every process that talks to the backend, for a handle that is only
@@ -595,6 +604,14 @@ sub _spawn_backend {
 	}
 
 	# We hold the lock, so a socket that will not answer is a leftover.
+	# Only a socket is removed as a leftover: a path that names anything else
+	# is not ours to delete, whatever the caller meant by it.
+	if (-e $path && !-S $path) {
+		$self->{last_error} = "$path exists and is not a socket; refusing to remove it";
+		$self->_close($lock, $lock_path);
+		return undef;
+	}
+
 	if (-e $path && !unlink($path)) {
 		$self->{last_error} = "cannot remove the stale socket $path: $!";
 		$self->_close($lock, $lock_path);
@@ -671,15 +688,34 @@ sub _exec_backend {
 
 	my @inc = grep { defined($_) && !ref($_) && length($_) } @INC;
 
+	# Under -T perl will not exec with a tainted argument or a PATH it cannot
+	# vouch for, and it counts the name of the perl itself ($^X) as tainted.
+	# All are untainted here, at the one place they are used, and only under -T
+	# so that nothing changes for anyone else.  The names are only refused if
+	# they hold a NUL, which would end them early.  PATH is
+	# kept if every entry is an absolute directory, and replaced if not: a
+	# relative or empty entry would make the child look in the current
+	# directory for what it runs.
+	my ($perl, $socket, $log) = ($^X, $self->{socket_path}, $self->{log});
+	if (${^TAINT}) {
+		($perl)   = $perl   =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
+		($socket) = $socket =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
+		($log)    = $log    =~ /\A([^\0]+)\z/ or POSIX::_exit(127);
+
+		my ($path) = ($ENV{PATH} // '') =~ m{\A(/[^:\0]*(?::/[^:\0]*)*)\z};
+		$ENV{PATH} = defined $path ? $path : '/usr/bin:/bin';
+		delete @ENV{qw(IFS CDPATH ENV BASH_ENV)};
+	}
+
 	no warnings 'exec';    # exec() does not return when it works
 	exec(
-		$^X,
+		$perl,
 		(map { ('-I', $_) } @inc),
 		'-MClass::Shared::Backend',
 		'-e',
 		'Class::Shared::Backend->new(socket => $ARGV[0], log => $ARGV[1])->run()',
-		$self->{socket_path},
-		$self->{log},
+		$socket,
+		$log,
 	);
 
 	POSIX::_exit(127);
@@ -898,6 +934,13 @@ B<Dies> (with the reason) if an option is unknown or wrong, if no backend can be
 reached or started, if the handshake is refused, or if the target's C<new>
 dies.  No object is returned in these cases.
 
+It also refuses to connect to a unix socket that is not the user's own: one
+whose directory is owned by someone else or can be written to by group or
+others, or that is not a socket or is owned by someone else.  Such a socket
+could answer every call with whatever it liked, and would be told every
+argument.  The reason begins "will not connect to".  The same rule applies to
+C<class-shared status> and C<class-shared stop>.
+
 =head3 API SPECIFICATION
 
 =head4 Input
@@ -944,6 +987,11 @@ limit.
 
 B<Dies> if the target dies, if the target has no such method, if the object has
 been released, or if the connection is lost.
+
+A method name is a plain name: letters, digits and underscores, not starting
+with a digit.  A name with a package in it (C<Other::function>, C<SUPER::new>)
+is refused by the backend, because it would call that function with the object
+as its first argument instead of a method of the object's class.
 
 =head3 API SPECIFICATION
 

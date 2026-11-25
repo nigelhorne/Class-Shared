@@ -217,7 +217,7 @@ for my $case (
 	['shared_call(undef)',               sub { $second->shared_call(undef) },              qr/no method name given/],
 	['shared_call with an empty name',   sub { $second->shared_call('') },                 qr/no method name given/],
 	['a method the class does not have', sub { $second->no_such_method },                  qr/Shared::Counter has no method 'no_such_method'/, place => $PLACE_ADDED],
-	['a name with a space in it',        sub { $second->shared_call('foo bar') },          qr/Shared::Counter has no method 'foo bar'/, place => $PLACE_ADDED],
+	['a name with a space in it',        sub { $second->shared_call('foo bar') },          qr/'foo bar' is not a plain method name/, place => $PLACE_ADDED],
 	['the constructor, by name',         sub { $second->shared_call('new') },              qr/cannot call new\(\) through Class::Shared/, place => $PLACE_ADDED],
 	['the destructor, by name',          sub { $second->shared_call('DESTROY') },          qr/cannot call DESTROY\(\) through Class::Shared/, place => $PLACE_ADDED],
 ) {

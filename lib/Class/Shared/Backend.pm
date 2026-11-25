@@ -453,6 +453,11 @@ sub _setup_unix {
 	my $self = shift;
 
 	if (-e $self->{socket}) {
+		# Only a socket is removed as a leftover: a path that names anything
+		# else is not ours to delete, however it came to be given as one.
+		die "$self->{socket} exists and is not a socket; refusing to remove it\n"
+			unless -S $self->{socket};
+
 		my $probe = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $self->{socket});
 		if ($probe) {
 			$self->_close($probe, 'the probe connection');
@@ -462,12 +467,19 @@ sub _setup_unix {
 			or die "cannot remove the stale socket $self->{socket}: $!\n";
 	}
 
+	# Bind with no permission for anyone else, so that there is no moment
+	# between bind and the chmod below when the socket is open to the group.
+	my $old_umask = umask 0177;
 	my $listener = IO::Socket::UNIX->new(
 		Type     => SOCK_STREAM,
 		Local    => $self->{socket},
 		Listen   => $LISTEN_BACKLOG,
 		Blocking => 1,
-	) or die "cannot listen on $self->{socket}: $!\n";
+	);
+	my $bind_error = $!;
+	umask $old_umask;
+
+	die "cannot listen on $self->{socket}: $bind_error\n" unless $listener;
 
 	chmod 0600, $self->{socket}
 		or die "cannot set permissions on $self->{socket}: $!\n";
@@ -493,6 +505,7 @@ sub _setup_tcp {
 	# once, and each accepted socket starts its handshake against it.
 	my $context = IO::Socket::SSL::SSL_Context->new(
 		SSL_server      => 1,
+		SSL_version     => $Class::Shared::TLS_VERSIONS,
 		SSL_cert_file   => $self->{tls_cert},
 		SSL_key_file    => $self->{tls_key},
 		SSL_ca_file     => $self->{tls_ca},
@@ -1134,6 +1147,13 @@ sub _op_call {
 	return _failure('protocol', "call: unknown calling context '$want'")
 		unless $want =~ /\A(?:list|scalar|void)\z/;
 
+	# A method is a plain name.  A qualified one ("Other::Package::function")
+	# would be looked up in that package, so a client could call any function
+	# of any loaded module with the object as its first argument, and that
+	# includes ones that write files.  can and isa are plain names too.
+	return _failure('forbidden', "call: '$method' is not a plain method name")
+		unless $method =~ /\A[A-Za-z_][A-Za-z0-9_]*\z/;
+
 	if ($method eq 'new' or $method eq 'DESTROY' or $method eq 'AUTOLOAD') {
 		return _failure('forbidden', "cannot call $method() through Class::Shared");
 	}
@@ -1317,6 +1337,13 @@ sub _log {
 	my ($self, $message, $level) = @_;
 
 	$level = 'info' unless defined $level;
+
+	# Some of what is logged is text a client chose (the reason a call died, a
+	# name it asked for).  An escape character in it would act on the terminal
+	# of whoever reads the log, so each run of control characters becomes one
+	# space.  A new line and a tab are kept: the logger indents the line after
+	# a new line, so it cannot pass for an entry of its own.
+	$message =~ s/[\x00-\x08\x0B-\x1F\x7F]+/ /g if defined $message;
 
 	# One logger per process.  The line starts with the pid so that the
 	# processes that share a log (the one that spawned the backend, and the

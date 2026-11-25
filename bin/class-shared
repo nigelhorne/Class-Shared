@@ -306,6 +306,14 @@ sub talk {
 		}
 	} else {
 		$where = socket_path_for();
+
+		# What the backend sends back is thawed, so it has to be ours.  A
+		# missing socket is left to the connect below to describe.
+		if (-e $where) {
+			my ($safe, $why) = Class::Shared::_check_endpoint($where);
+			return (undef, "no backend at $where: will not connect: $why") unless $safe;
+		}
+
 		$sock = IO::Socket::UNIX->new(Type => SOCK_STREAM, Peer => $where);
 		return (undef, "no backend at $where: $!") unless $sock;
 	}

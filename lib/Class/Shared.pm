@@ -26,6 +26,12 @@ our $POLL_INTERVAL = 0.02;
 # the frontend and the command line, so they cannot word it differently.
 our $UNIX_TRUST_REASON = 'its mode 0600 file already decides who may connect';
 
+# The protocol versions a TLS connection may use, in IO::Socket::SSL's own
+# notation: TLS 1.2 and later.  SSL 2 and 3 and TLS 1.0 and 1.1 are broken or
+# deprecated (RFC 8996), and left to its defaults the library would still
+# offer them to a peer that asked.  Used by both ends so that they agree.
+our $TLS_VERSIONS = 'SSLv23:!SSLv3:!SSLv2:!TLSv1:!TLSv1_1';
+
 # Parts of a class name are joined by "::".  The characters of a part never
 # include ":", so a part can only end where "::" or the end begins, and there
 # is only one way to match any name.  That makes the possessive quantifiers
@@ -34,8 +40,10 @@ our $UNIX_TRUST_REASON = 'its mode 0600 file already decides who may connect';
 # The classes are written out, not \w, so that no non-ASCII letter is accepted.
 my $CLASS_RE = qr/
 	\A
-	[A-Za-z_] [A-Za-z0-9_]*+              # the first part
-	(?: :: [A-Za-z_] [A-Za-z0-9_]*+ )*+   # each part after a "::"
+	(                                       # captured, so the result is untainted
+		[A-Za-z_] [A-Za-z0-9_]*+              # the first part
+		(?: :: [A-Za-z_] [A-Za-z0-9_]*+ )*+   # each part after a "::"
+	)
 	\z
 /x;
 
@@ -258,10 +266,13 @@ sub validate_class {
 	die "Class::Shared: no class name given\n"
 		unless defined $class && length $class;
 
-	die "Class::Shared: '$class' is not a valid class name\n"
-		unless $class =~ $CLASS_RE;
+	# The captured copy is returned, not the argument: it is the only text that
+	# has been matched against the pattern, so under taint mode (-T) it is
+	# untainted by the check that proves it safe.
+	my ($valid) = $class =~ $CLASS_RE
+		or die "Class::Shared: '$class' is not a valid class name\n";
 
-	return $class;
+	return $valid;
 }
 
 =head2 read_secret
@@ -349,6 +360,7 @@ sub client_tls_options {
 	require IO::Socket::SSL;
 
 	my %tls = (
+		SSL_version     => $TLS_VERSIONS,
 		SSL_cert_file   => $opt{cert},
 		SSL_key_file    => $opt{key},
 		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
@@ -413,20 +425,31 @@ sub detach_standard_streams {
 sub default_dir {
 	my (%opt) = @_;
 
-	return $opt{dir} if defined $opt{dir} && length $opt{dir};
+	my $dir;
 
-	if (defined $ENV{CLASS_SHARED_DIR} && length $ENV{CLASS_SHARED_DIR}) {
-		return $ENV{CLASS_SHARED_DIR};
+	if (defined $opt{dir} && length $opt{dir}) {
+		$dir = $opt{dir};
+	} elsif (defined $ENV{CLASS_SHARED_DIR} && length $ENV{CLASS_SHARED_DIR}) {
+		$dir = $ENV{CLASS_SHARED_DIR};
+	} elsif (defined $ENV{XDG_RUNTIME_DIR} && length $ENV{XDG_RUNTIME_DIR} && -d $ENV{XDG_RUNTIME_DIR}) {
+		$dir = File::Spec->catdir($ENV{XDG_RUNTIME_DIR}, 'class-shared');
+	} elsif (-d "/run/user/$>") {
+		$dir = File::Spec->catdir("/run/user/$>", 'class-shared');
+	} else {
+		$dir = File::Spec->catdir(File::Spec->tmpdir, "class-shared-$>");
 	}
 
-	if (defined $ENV{XDG_RUNTIME_DIR} && length $ENV{XDG_RUNTIME_DIR} && -d $ENV{XDG_RUNTIME_DIR}) {
-		return File::Spec->catdir($ENV{XDG_RUNTIME_DIR}, 'class-shared');
-	}
+	# The directory may come from the environment or the caller, both of which
+	# are tainted under -T, and perl refuses to mkdir or open a file in a
+	# tainted path.  A name is not dangerous because of what it says, only
+	# because of what it is used for, and everything made here is checked by
+	# ensure_dir (ours, and closed to others) before anything is trusted in it.
+	# The one thing that is refused outright is a NUL byte, which would end
+	# the name early in the system call and so name a different place.
+	my ($clean) = $dir =~ /\A([^\0]+)\z/
+		or die "Class::Shared: a directory name may not contain a NUL byte\n";
 
-	my $runtime = "/run/user/$>";
-	return File::Spec->catdir($runtime, 'class-shared') if -d $runtime;
-
-	return File::Spec->catdir(File::Spec->tmpdir, "class-shared-$>");
+	return $clean;
 }
 
 # Whether this perl can make a unix domain socket, which is what a backend is
@@ -483,6 +506,17 @@ sub ensure_dir {
 		mkdir($dir, 0700) or return (0, "cannot create $dir: $!");
 	}
 
+	return _check_dir($dir);
+}
+
+# Purpose:       say whether $dir is somewhere only this user can put a socket.
+# Entry:         $dir is a directory name; nothing is created.
+# Exit status:   (1, undef) when it is ours and not writable by group or
+#                others, otherwise (0, $why_not).
+# Side effects:  none.
+sub _check_dir {
+	my ($dir) = @_;
+
 	my @stat = stat($dir);
 	return (0, "cannot stat $dir: $!") unless @stat;
 
@@ -491,6 +525,33 @@ sub ensure_dir {
 
 	return (0, "$dir is writable by group or others; refusing to use it")
 		if $stat[2] & 0022;
+
+	return (1, undef);
+}
+
+# Purpose:       decide whether to talk to the socket at $path.  What comes back
+#                over it is thawed by Storable, so a socket made by another user
+#                must never be trusted: it could answer with whatever it likes,
+#                and would be told every argument the client sends.
+# Entry:         $path names a socket that is known to exist.
+# Exit status:   (1, undef) when its directory is safe (see _check_dir) and the
+#                socket is a socket owned by this user, otherwise (0, $why_not).
+# Side effects:  none.
+# Why both:      a safe directory means nobody else could have put the socket
+#                there; the owner check catches a socket that was already there.
+sub _check_endpoint {
+	my ($path) = @_;
+
+	my ($safe, $why) = _check_dir(dir_of($path));
+	return (0, $why) unless $safe;
+
+	my @stat = stat($path);
+	return (0, "cannot stat $path: $!") unless @stat;
+
+	return (0, "$path is not a socket") unless -S _;
+
+	return (0, "$path is owned by uid $stat[4], not by uid $>")
+		if $stat[4] != $>;
 
 	return (1, undef);
 }
@@ -672,6 +733,11 @@ boundary.
 
 B<Side effects:> reads the environment and checks whether directories exist.  It
 does not create anything; use L</ensure_dir> for that.
+
+B<Dies> if the directory name contains a NUL byte, which would end the name
+early in a system call and so name a different place.  Under taint mode
+(C<-T>) the name is untainted here, because everything made in it is checked by
+L</ensure_dir> before it is trusted.
 
 =head3 API SPECIFICATION
 

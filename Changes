@@ -5,6 +5,15 @@ Revision history for Class-Shared
         - The frontend no longer loads IO::Socket::UNIX (and with it IO::Socket,
           IO::Socket::INET and IO::Handle): a client process is about 1.1 MB
           smaller and loads a few milliseconds faster.
+        - Security audit.  The frontend and the command now refuse to connect to a
+          unix socket that is not the user's own (a directory others can write
+          to, or a socket made by someone else): a socket in a shared temporary
+          directory could otherwise answer every call, and was sent every
+          argument.  The backend refuses package-qualified method names (which
+          could call any function of any loaded module), removes a stale socket
+          only if it is a socket, binds it with a restrictive umask, requires
+          TLS 1.2 or later, and strips control characters from the log.  The
+          frontend works under taint mode (-T).  t/19-security.t.
         - Regular expressions audited: \d is now ASCII-only (/a) for the object id
           and the --listen port, and the class-name pattern is possessive, so a
           long bad name is refused in constant extra work (t/18-regex.t).
