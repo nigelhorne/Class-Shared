@@ -26,7 +26,18 @@ our $POLL_INTERVAL = 0.02;
 # the frontend and the command line, so they cannot word it differently.
 our $UNIX_TRUST_REASON = 'its mode 0600 file already decides who may connect';
 
-my $CLASS_RE = qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/;
+# Parts of a class name are joined by "::".  The characters of a part never
+# include ":", so a part can only end where "::" or the end begins, and there
+# is only one way to match any name.  That makes the possessive quantifiers
+# safe: they stop the engine from trying shorter parts after a failure, which
+# made a long bad name cost ten times as much to refuse as it did to read.
+# The classes are written out, not \w, so that no non-ASCII letter is accepted.
+my $CLASS_RE = qr/
+	\A
+	[A-Za-z_] [A-Za-z0-9_]*+              # the first part
+	(?: :: [A-Za-z_] [A-Za-z0-9_]*+ )*+   # each part after a "::"
+	\z
+/x;
 
 =head1 NAME
 

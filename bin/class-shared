@@ -175,7 +175,9 @@ sub tcp_endpoint {
 		fatal("--listen and --host/--port are alternatives; give one")
 			if defined $host || defined $port;
 
-		if ($opt{listen} =~ /\Atcp:(.+):(\d+)\z/) {
+		# /a: a port is ASCII digits; without it \d takes digits of other scripts
+		# when the argument has been decoded (perl -CA).
+		if ($opt{listen} =~ /\Atcp:(.+):(\d+)\z/a) {
 			($host, $port) = ($1, $2);
 		} elsif ($opt{listen} =~ /\Aunix:(.+)\z/) {
 			$opt{socket} = $1;

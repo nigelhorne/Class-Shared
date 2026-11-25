@@ -5,6 +5,9 @@ Revision history for Class-Shared
         - The frontend no longer loads IO::Socket::UNIX (and with it IO::Socket,
           IO::Socket::INET and IO::Handle): a client process is about 1.1 MB
           smaller and loads a few milliseconds faster.
+        - Regular expressions audited: \d is now ASCII-only (/a) for the object id
+          and the --listen port, and the class-name pattern is possessive, so a
+          long bad name is refused in constant extra work (t/18-regex.t).
         - t/17-first-time-user.t: first-time-user flows (minimal, odd-order and
           repeated calls to the frontend, helpers, protocol, backend and
           command), each asserting an explicit one-line failure or result.

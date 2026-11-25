@@ -1108,7 +1108,7 @@ sub _op_call {
 
 	my $id = $message->{id};
 	return _failure('protocol', 'call: no object id')
-		unless defined $id && $id =~ /\A\d+\z/;
+		unless defined $id && $id =~ /\A\d+\z/a;	# /a: ASCII digits only, as object ids are
 
 	my $entry = $self->{objects}{$id};
 	return _failure('unknown_object',

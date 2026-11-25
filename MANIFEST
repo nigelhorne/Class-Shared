@@ -29,6 +29,7 @@ t/14-template.t
 t/15-date-manip.t
 t/16-backend-logic.t
 t/17-first-time-user.t
+t/18-regex.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem
