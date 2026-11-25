@@ -109,16 +109,16 @@ sub new {
 		control       => $control,
 		log           => $opt{log} || ($control . '.log'),
 		daemonize     => $opt{daemonize} ? 1 : 0,
-					max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
-			max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
-			max_queued    => $max_queued,
-			max_queued_total => $max_queued_total,
-			write_timeout => defined $opt{write_timeout}
-				? $opt{write_timeout}
-				: $WRITE_TIMEOUT,
-			handshake_timeout => defined $opt{handshake_timeout}
-				? $opt{handshake_timeout}
-				: $HANDSHAKE_TIMEOUT,
+		max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
+		max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
+		max_queued    => $max_queued,
+		max_queued_total => $max_queued_total,
+		write_timeout => defined $opt{write_timeout}
+			? $opt{write_timeout}
+			: $WRITE_TIMEOUT,
+		handshake_timeout => defined $opt{handshake_timeout}
+			? $opt{handshake_timeout}
+			: $HANDSHAKE_TIMEOUT,
 		start_timeout => defined $opt{start_timeout} ? $opt{start_timeout} : 2,
 		objects       => {},
 		clients       => {},
@@ -133,6 +133,7 @@ sub new {
 		logfh         => undef,
 		listener      => undef,
 		lock          => undef,
+		owns_socket   => 0,
 		address       => undef,
 	}, $class;
 
@@ -164,11 +165,15 @@ sub run {
 	return 0;
 }
 
+# Remove the socket only if this object bound it.  A backend that failed to
+# start because another one is already serving never owned the path, and
+# unlinking it here would leave the live backend running but unreachable.
 sub DESTROY {
 	my $self = shift;
 	return if $self->{cleaned};
 	$self->{cleaned} = 1;
-	unlink $self->{socket} if $self->{socket} && -e $self->{socket};
+	unlink $self->{socket} if $self->{owns_socket} && -e $self->{socket};
+	return;
 }
 
 # The class is the client's choice, so it is loaded when a client asks for it
@@ -266,6 +271,7 @@ sub _setup_unix {
 
 	$self->{listener} = $listener;
 	$self->{address} = $self->{socket};
+	$self->{owns_socket} = 1;
 
 	return 1;
 }
@@ -1034,7 +1040,7 @@ sub _cleanup {
 		$self->{listener} = undef;
 	}
 
-	unlink $self->{socket} if defined $self->{socket};
+	unlink $self->{socket} if $self->{owns_socket};
 
 	for my $client (values %{$self->{clients}}) {
 		# A reply that was queued when the backend stopped, such as the one

@@ -133,7 +133,6 @@ sub default_dir {
 	return File::Spec->catdir(File::Spec->tmpdir, "class-shared-$>");
 }
 
-# Create $dir if needed and make sure nobody else can drop a socket in it.
 # Whether this perl can make a unix domain socket, which is what a backend is
 # reached through and what a frontend starts one over.  Probed rather than
 # assumed from $^O: a Cygwin perl is not MSWin32 and has them, and a platform
@@ -173,6 +172,8 @@ sub _require_unix_sockets {
 		. "This distribution is Unix-only (see PLATFORMS)\n";
 }
 
+# Create $dir if needed and make sure nobody else can drop a socket in it.
+# Returns (1, undef), or (0, $why_not), as the POD documents.
 sub ensure_dir {
 	my ($dir) = @_;
 
@@ -193,7 +194,7 @@ sub ensure_dir {
 	return (0, "$dir is writable by group or others; refusing to use it")
 		if $stat[2] & 0022;
 
-	return (1);
+	return (1, undef);
 }
 
 # One socket for every class.  The backend behind it is told which class a
@@ -468,6 +469,23 @@ handle) sees the backend's environment, not yours: its C<%ENV> is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
+
+=item *
+
+A socket path given explicitly (the C<socket> option, or C<--socket>) is not
+checked against the C<sockaddr_un> length limit, unlike one built by
+C<Class::Shared::socket_path>.  An over-long path is silently truncated by the
+operating system, so a client and a backend can end up on the wrong socket.
+Prefer C<dir> and let C<Class::Shared::socket_path> build the path.
+
+=item *
+
+A client may name any method of the target object, including a
+package-qualified one such as C<Other::Package::function>, which Perl resolves
+without regard to the object's class.  Only C<new>, C<DESTROY> and C<AUTOLOAD>
+are refused.  This is inside the trust model, since a client that has passed
+the transport's authentication can already make the backend load any module,
+but it means the backend is only as safe as the clients allowed to reach it.
 
 =back
 

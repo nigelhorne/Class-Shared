@@ -291,7 +291,7 @@ sub talk {
 		if (!$sock) {
 			my $why = IO::Socket::SSL::errstr();
 			$why = "$!" unless defined $why && length $why;
-						return (undef, "no backend at $where: TLS failed: $why");
+			return (undef, "no backend at $where: TLS failed: $why");
 		}
 	} else {
 		$where = socket_path_for();

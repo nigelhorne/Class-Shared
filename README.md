@@ -236,6 +236,17 @@ handle) sees the backend's environment, not yours: its `%ENV` is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
+- A socket path given explicitly (the `socket` option, or `--socket`) is not
+checked against the `sockaddr_un` length limit, unlike one built by
+`Class::Shared::socket_path`.  An over-long path is silently truncated by the
+operating system, so a client and a backend can end up on the wrong socket.
+Prefer `dir` and let `Class::Shared::socket_path` build the path.
+- A client may name any method of the target object, including a
+package-qualified one such as `Other::Package::function`, which Perl resolves
+without regard to the object's class.  Only `new`, `DESTROY` and `AUTOLOAD`
+are refused.  This is inside the trust model, since a client that has passed
+the transport's authentication can already make the backend load any module,
+but it means the backend is only as safe as the clients allowed to reach it.
 
 ## Platforms
 

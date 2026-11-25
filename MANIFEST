@@ -21,6 +21,7 @@ t/06-real-class.t
 t/07-platform.t
 t/08-concurrent-spawn.t
 t/09-unix-queue.t
+t/10-regressions.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem

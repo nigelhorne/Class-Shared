@@ -13,6 +13,11 @@ Revision history for Class-Shared
         - Objects belong to the connection that created them, so a client that
           exits or crashes takes nothing with it and leaks nothing.
         - Framing and Storable serialisation in Class::Shared::Protocol.
+        - A backend that fails to start because another is already serving
+          no longer removes the live backend's socket when it exits; only a
+          backend that bound the socket removes it.
+        - Class::Shared::ensure_dir returns (1, undef) on success, as
+          documented, instead of (1).
         - Shared secret for TCP only: a TCP listener refuses to start without
           one, so nothing is ever thawed for a peer that has not authenticated,
           and when a token is set every frame carries an HMAC-SHA-256 of its

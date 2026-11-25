@@ -166,14 +166,7 @@ sub shared_call {
 	die "Class::Shared::Frontend->shared_call: no method name given\n"
 		unless defined $method && length $method;
 
-	my $want = wantarray;
-	my $context = $want ? 'list' : defined($want) ? 'scalar' : 'void';
-
-	my $result = $self->_invoke($method, \@_, $context);
-
-	return @{$result}       if $context eq 'list';
-	return                 if $context eq 'void';
-	return $result->[0];
+	return $self->_invoke_as_called($method, \@_);
 }
 
 sub shared_status {
@@ -242,14 +235,7 @@ sub AUTOLOAD {
 	die "Class::Shared::Frontend: '$method' called on something that is not a Class::Shared::Frontend object\n"
 		unless ref $self;
 
-	my $want = wantarray;
-	my $context = $want ? 'list' : defined($want) ? 'scalar' : 'void';
-
-	my $result = $self->_invoke($method, \@_, $context);
-
-	return @{$result}       if $context eq 'list';
-	return                 if $context eq 'void';
-	return $result->[0];
+	return $self->_invoke_as_called($method, \@_);
 }
 
 # can() and isa() are inherited from UNIVERSAL, which would answer for the
@@ -280,14 +266,7 @@ sub can {
 	return sub {
 		shift if @_ && defined $_[0] && ref($_[0]) && $_[0] == $self;
 
-		my $want = wantarray;
-		my $context = $want ? 'list' : defined($want) ? 'scalar' : 'void';
-
-		my $result = $self->_invoke($method, \@_, $context);
-
-		return @{$result} if $context eq 'list';
-		return if $context eq 'void';
-		return $result->[0];
+		return $self->_invoke_as_called($method, \@_);
 	};
 }
 
@@ -309,6 +288,28 @@ sub isa {
 	return 0 unless $response && $response->{ok};
 
 	return ref($response->{result}) eq 'ARRAY' && $response->{result}[0] ? 1 : 0;
+}
+
+# Purpose:       Run $method in the backend in the context this routine's own
+#                caller used, so list, scalar and void calls behave as if the
+#                target object were local.  Three entry points need exactly this.
+# Entry:         $self is a connected frontend; $args is an array ref.
+# Exit status:   the call's results, shaped by the caller's context; dies as
+#                _invoke does.
+# Side effects:  one round trip to the backend.  Called as the last expression
+#                of its caller (return $self->_invoke_as_called(...)) so that
+#                wantarray here is the caller's context.
+sub _invoke_as_called {
+	my ($self, $method, $args) = @_;
+
+	my $want = wantarray;
+	my $context = $want ? 'list' : defined($want) ? 'scalar' : 'void';
+
+	my $result = $self->_invoke($method, $args, $context);
+
+	return @{$result} if $context eq 'list';
+	return if $context eq 'void';
+	return $result->[0];
 }
 
 sub _invoke {
