@@ -87,10 +87,12 @@ WriteMakefile(
 				},
 			},
 			test => {
-				# Used by t/13-database-abstraction.t as a real-world example
-				# of a class to share; the test is skipped without it.
+				# Real-world examples of classes to share, each used by one
+				# test that is skipped when its module is not installed.
 				suggests => {
 					'Database::Abstraction' => '0.57',
+					'Date::Manip'           => '6.00',
+					'Template'              => 0,
 				},
 			},
 			develop => {

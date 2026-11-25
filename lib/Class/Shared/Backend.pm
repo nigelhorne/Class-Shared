@@ -1682,7 +1682,9 @@ C<Class__Shared__Backend__max_clients=50>;
 
 =item 3.
 
-a configuration file.
+a configuration file, but only if the program that makes the backend names one
+with C<config_file>.  Nothing is searched for.  See L</Where the settings can
+come from>.
 
 =back
 
@@ -1693,10 +1695,13 @@ stray variable in the environment must not be able to replace what the program
 chose.  A value you do not pass is the place where a site default is welcome.
 
 The file is named after the class, in lower case, with C<::> turned into C<->:
-F<class-shared-backend.yml>.  (JSON and the other formats that
-L<Config::Abstraction> reads work too.)  It is looked for in the directory of
-C<config_file>, then in each directory of C<config_dirs>.  Inside, the settings
-sit under a key that has C<__> where the class name has C<::>:
+F<class-shared-backend.yml>.  JSON works too (F<class-shared-backend.json>); the
+kind of file is taken from its name.  You give C<config_file> either as a full
+path, or as a bare file name together with C<config_dirs>, a list of
+directories to look in.  No directory is searched unless you ask: a file in
+F<~/.conf>, for example, is B<not> read.  A C<config_file> that has a C<..>
+in it is refused.  Inside, the settings sit under a key that has C<__> where
+the class name has C<::>:
 
     ---
     Class__Shared__Backend:
@@ -1711,13 +1716,352 @@ bad one is reported as "a configured value is not valid".  The rules between
 options still apply: a C<token> in the environment is refused for a unix socket,
 just as one passed in code is.
 
+A file called F<universal.yml> in the same directory is read as well, and its
+C<UNIVERSAL:> section applies to this backend and to every other class that uses
+L<Object::Configure>.  Keep the backend's file in a directory of its own so that
+no such file is picked up by accident.
+
 Treat these places as you would treat the program.  A token or a certificate
 path set in a file or in the environment can be read by anybody who can read
 that file or that process's environment.  Keep the file mode 0600 and prefer
-C<token_file> in L<class-shared> to putting a secret in a variable.
+C<--token-file> in L<class-shared> to putting a secret in a variable.
 
 A backend that a frontend starts for you inherits the environment of that
 frontend, so these variables apply to it too.
+
+=head1 RUNNING AS A SERVICE
+
+You do not have to do any of this.  The first frontend that cannot find a
+backend starts one for you.  Run the backend as a service when you want it to be
+running before the first request, to be started again if it stops, or to run
+with settings that you choose in one place.
+
+Examples marked (tested) were run, on systemd 257 with Perl 5.40.  Those marked
+(not run) were written from the manual of that system and have not been run, so
+try them before you rely on them.
+
+=head2 Decide where it lives
+
+A unix socket is mode 0600 in a directory that only its owner can write to.  This
+has three results.
+
+=over 4
+
+=item *
+
+Only the user who runs the backend can connect to it.  Sites that run as
+different users cannot share one unix socket backend.  Run them as one user, run
+one backend for each user, or use TCP with TLS (see L</TLS>).
+
+=item *
+
+Every client must look in the same directory as the backend.  The directory is
+the first of these that is set: C<--dir> or C<dir>, the C<CLASS_SHARED_DIR>
+environment variable, F<$XDG_RUNTIME_DIR/class-shared>, F</run/user/UID/class-shared>,
+and last the system temporary directory.  The most common fault is a backend that
+was started with C<--dir> while the clients use the default.  Run
+C<class-shared path> in the same environment as a client to see where it will
+look.
+
+=item *
+
+The backend makes these files next to the socket: the socket itself, a lock file
+(C<.owner>), a pid file (C<.pid>) and the log (C<.log>).  If you use
+C<RuntimeDirectory> with systemd, all of them are deleted when the service stops.
+See L</Where the log goes>.
+
+=back
+
+=head2 Where the settings can come from
+
+There are three places, and not all of them work with the C<class-shared>
+command.
+
+=over 4
+
+=item Command line options
+
+C<--dir>, C<--socket>, C<--log>, C<--listen>, the TLS options and
+C<--token-file>.  Nothing else, so there is no option for C<max_clients>.
+
+=item Environment variables
+
+Any option, as C<Class__Shared__Backend__NAME>.  This works with the
+C<class-shared> command (tested): with C<Class__Shared__Backend__max_clients=1>
+set, a second client was refused.  A service manager can set them for you.
+
+=item A configuration file
+
+Any option, but only when the program that makes the backend passes
+C<config_file>.  The C<class-shared> command has no option for that, and a
+C<Class__Shared__Backend__config_file> variable is ignored (tested).  To use a
+file you need a launcher, which is three lines of Perl.
+
+=back
+
+A value in the environment beats one in a file, and a value on the command line
+or in code beats both.
+
+=head2 A configuration file and a launcher (tested)
+
+The file, F</etc/class-shared/class-shared-backend.yml>:
+
+    ---
+    Class__Shared__Backend:
+        dir: /run/class-shared
+        log: /var/log/class-shared/backend.log
+        max_clients: 50
+        max_objects: 1000
+
+The launcher, F</usr/local/bin/class-shared-backend>:
+
+    #!/usr/bin/perl
+    use strict;
+    use warnings;
+    use Class::Shared::Backend;
+
+    Class::Shared::Backend->new(
+        config_file => '/etc/class-shared/class-shared-backend.yml',
+    )->run;
+
+Run it from a service manager like any other program.  With this file it used
+the directory and log the file named, enforced C<max_clients>, and stopped
+cleanly on C<SIGTERM> (tested).  The file is read once, when the backend starts,
+so a change needs a restart.  Do not set C<daemonize> in a file that a service
+manager runs: the manager would lose track of the process.
+
+=head2 systemd, for one user (tested)
+
+This is the usual choice for a web site that runs as an ordinary user.  Save it
+as F<~/.config/systemd/user/class-shared.service>:
+
+    [Unit]
+    Description=Class::Shared backend
+
+    [Service]
+    Type=simple
+    StateDirectory=class-shared
+    EnvironmentFile=-%h/.config/class-shared/backend.env
+    ExecStart=/usr/local/bin/class-shared start --foreground --log %S/class-shared/backend.log
+    Restart=on-failure
+    RestartSec=2
+
+    [Install]
+    WantedBy=default.target
+
+Then:
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now class-shared
+    systemctl --user status class-shared
+    class-shared status
+
+To start it at boot and not when you log in, run C<loginctl enable-linger
+$USER> once.
+
+The settings go in F<~/.config/class-shared/backend.env>, one C<NAME=value> a
+line.  The C<-> after C<EnvironmentFile=> means that the file may be missing:
+
+    Class__Shared__Backend__max_clients=50
+    Class__Shared__Backend__max_objects=1000
+    TZ=UTC
+
+C<--foreground> keeps the backend in the process that systemd started.  Without
+it the command goes into the background and systemd thinks the service has
+ended.  The socket is in the default directory, F</run/user/UID/class-shared>,
+because systemd sets C<XDG_RUNTIME_DIR> for a user service, so clients need no
+setting.
+
+What was checked: the service starts and reports C<active>; the environment file
+is applied; after C<kill -9> the service came back after the delay set by C<RestartSec>
+and a client could reach it, because a backend removes a socket that nobody
+answers on; and C<systemctl --user stop> ends it cleanly and removes the socket.  Stop
+needs no C<ExecStop>: the backend stops on C<SIGTERM>.
+
+Two things to know.  First, systemd does not read your shell's startup files.  Its
+C<PATH> is short, and C<PERL5LIB> and perlbrew are not set.  Give C<ExecStart> the
+full path of the script.  If you use perlbrew or a local library, name the C<perl>
+that installed it as well, as in C<ExecStart=/home/you/perl5/perlbrew/perls/perl-5.40.0/bin/perl
+/home/you/perl5/perlbrew/perls/perl-5.40.0/bin/class-shared start --foreground>,
+or add C<Environment=PERL5LIB=/home/you/perl5/lib/perl5> for your classes.  Second, C<Restart=on-failure> does not
+restart a backend that C<class-shared stop> ended, because that is a normal exit.
+Use C<Restart=always> if you want it back even then.
+
+=head2 systemd, a system service (not run)
+
+Use this when the backend should start with the machine, for the user that the web
+server runs as.  Save it as F</etc/systemd/system/class-shared.service>:
+
+    [Unit]
+    Description=Class::Shared backend
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=www-data
+    Group=www-data
+    RuntimeDirectory=class-shared
+    RuntimeDirectoryMode=0700
+    LogsDirectory=class-shared
+    EnvironmentFile=-/etc/class-shared/backend.env
+    Environment=CLASS_SHARED_DIR=/run/class-shared
+    ExecStart=/usr/local/bin/class-shared start --foreground --dir /run/class-shared --log /var/log/class-shared/backend.log
+    Restart=on-failure
+    RestartSec=2
+
+    [Install]
+    WantedBy=multi-user.target
+
+Then C<systemctl daemon-reload> and C<systemctl enable --now class-shared>.
+C<RuntimeDirectoryMode=0700> matters: the backend refuses a directory that other
+users can write to.  The clients must run as the same user and must be told the
+directory, with C<CLASS_SHARED_DIR=/run/class-shared> in their environment or
+C<dir =E<gt> '/run/class-shared'> in their code.
+
+To use a configuration file, replace C<ExecStart> with the launcher from the
+section above.
+
+=head2 macOS, launchd (not run)
+
+Save this as F<~/Library/LaunchAgents/org.cpan.class-shared.plist>.  macOS has no
+C<XDG_RUNTIME_DIR>, and the temporary directory that a launchd job sees may not
+be the one that your shell sees, so give the directory explicitly here B<and> to
+every client:
+
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>Label</key><string>org.cpan.class-shared</string>
+      <key>ProgramArguments</key>
+      <array>
+        <string>/usr/local/bin/class-shared</string>
+        <string>start</string>
+        <string>--foreground</string>
+      </array>
+      <key>EnvironmentVariables</key>
+      <dict>
+        <key>CLASS_SHARED_DIR</key><string>/Users/you/Library/Caches/class-shared</string>
+      </dict>
+      <key>RunAtLoad</key><true/>
+      <key>KeepAlive</key>
+      <dict><key>SuccessfulExit</key><false/></dict>
+    </dict>
+    </plist>
+
+Load it with C<launchctl load ~/Library/LaunchAgents/org.cpan.class-shared.plist>.
+C<SuccessfulExit> false means "restart it only if it failed", like systemd's
+C<on-failure>.  With a plain C<KeepAlive> set to true, launchd would start the
+backend again after C<class-shared stop>.
+
+=head2 FreeBSD, rc.d (not run)
+
+Save this as F</usr/local/etc/rc.d/class_shared> and make it executable.  It uses
+the command's own background mode and its C<stop> command, so no
+C<daemon(8)> is needed:
+
+    #!/bin/sh
+    # PROVIDE: class_shared
+    # REQUIRE: LOGIN
+    # KEYWORD: shutdown
+
+    . /etc/rc.subr
+
+    name="class_shared"
+    rcvar="class_shared_enable"
+    start_cmd="class_shared_start"
+    stop_cmd="class_shared_stop"
+    status_cmd="class_shared_status"
+
+    : ${class_shared_user:="www"}
+    : ${class_shared_dir:="/var/run/class-shared"}
+
+    class_shared_start() {
+        su -m "${class_shared_user}" -c \
+            "/usr/local/bin/class-shared start --dir ${class_shared_dir}"
+    }
+    class_shared_stop() {
+        su -m "${class_shared_user}" -c \
+            "/usr/local/bin/class-shared stop --dir ${class_shared_dir}"
+    }
+    class_shared_status() {
+        su -m "${class_shared_user}" -c \
+            "/usr/local/bin/class-shared status --dir ${class_shared_dir}"
+    }
+
+    load_rc_config $name
+    run_rc_command "$1"
+
+Enable it with C<sysrc class_shared_enable=YES>.  Create the directory first, owned
+by that user and mode 0700.  The command in the background mode returns before the
+backend is ready (see L</run>), so a script that needs it at once
+should run C<class-shared status> in a short loop.  OpenBSD's F<rc.d> works in the
+same way, with C<rc_start> and C<rc_stop> running the same two commands.
+
+=head2 runit and s6 (not run)
+
+These want a program that stays in the foreground, which is what C<--foreground>
+is.  A runit F<run> file:
+
+    #!/bin/sh
+    exec 2>&1
+    exec chpst -u www /usr/local/bin/class-shared start --foreground \
+        --dir /var/run/class-shared --log /var/log/class-shared/backend.log
+
+For s6, use C<s6-setuidgid www> in place of C<chpst -u www>.
+
+=head2 Containers (not run)
+
+Run one backend in a container, in the foreground, and share the socket directory
+with the containers that have the clients:
+
+    docker run -d --name class-shared --user 33:33 \
+        -v class-shared-run:/run/class-shared \
+        myimage class-shared start --foreground --dir /run/class-shared
+
+Every client container mounts the same volume at the same place and runs with the
+same user id (33 here), because the socket is mode 0600.
+
+=head2 Without a service manager
+
+The command starts the backend in the background, and C<stop> ends it:
+
+    class-shared start
+    class-shared status
+    class-shared stop
+
+To start it when the machine does, put C<@reboot /usr/local/bin/class-shared
+start> in your crontab.  Nothing starts it again if it stops, which is the
+difference from the examples above.
+
+=head2 Windows
+
+Not supported.  A backend needs unix sockets and owner-only directories (see
+L</SECURITY>).
+
+=head2 Where the log goes
+
+The backend writes its log to a file (see L</LOG>), also in the foreground.  It
+does not write it to the journal or to standard output, so C<journalctl> shows
+only what the service manager says (tested).  Use C<--log> to put the file
+somewhere that lasts.  The default, next to the socket, is wrong for a service
+that has a C<RuntimeDirectory>: systemd deletes the directory when the service
+stops, and the log with it (seen in testing).  C<StateDirectory> and
+C<LogsDirectory> are kept (tested for C<StateDirectory>).
+
+=head2 The backend has its own environment
+
+A service does not get your shell's environment, and a backend started by a
+frontend gets the frontend's.  Anything that a class reads from the environment
+must be set for the backend.  The one that shows up first is C<TZ>: C<Date::Manip>
+complains and refuses to work without a time zone, so a class that uses it needs
+C<TZ=UTC> (or your zone) in the unit or the environment file.  A class that reads
+the request's own variables, such as C<REMOTE_ADDR>, gets the backend's, not the
+client's.  Pass those values as arguments instead.
+
+Objects live in memory.  When the backend restarts, the objects that it held are
+gone.
 
 =head1 SINGLETON
 

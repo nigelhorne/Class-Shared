@@ -46,6 +46,11 @@ Revision history for Class-Shared
           class gives when called directly.  It is skipped unless
           Database::Abstraction is installed.  New test requirement:
           Test::Needs.
+        - t/14-template.t (Template) and t/15-date-manip.t (Date::Manip::Date)
+          do the same for two more classes: one that needs a small wrapper
+          class, because Template->process writes into a reference it is
+          given, and one that keeps a date between calls.  Both are skipped
+          unless their module is installed.
         - Class::Shared::Backend writes its log with Log::Abstraction.  The
           line format is unchanged; a multi-line message now has a tab after
           each line break instead of the breaks being turned into spaces.

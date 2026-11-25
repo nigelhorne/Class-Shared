@@ -25,6 +25,8 @@ t/10-regressions.t
 t/11-backend-options.t
 t/12-backend-log.t
 t/13-database-abstraction.t
+t/14-template.t
+t/15-date-manip.t
 t/certs/ca-key.pem
 t/certs/ca.pem
 t/certs/client-key.pem
@@ -41,5 +43,6 @@ t/certs/server.pem
 t/lib/Shared/Cities.pm
 t/lib/Shared/Conjunction.pm
 t/lib/Shared/Counter.pm
+t/lib/Shared/Page.pm
 t/lib/Shared/Tally.pm
 t/pod-synopsis.t

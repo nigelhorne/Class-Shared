@@ -31,6 +31,8 @@ on 'test' => sub {
 	requires 'Test::Needs';
 	requires 'Test::Permissions';
 	suggests 'Database::Abstraction', '0.57';
+	suggests 'Date::Manip', '6.00';
+	suggests 'Template';
 };
 
 on 'develop' => sub {
