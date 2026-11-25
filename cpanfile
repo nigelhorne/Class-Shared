@@ -28,7 +28,9 @@ on 'test' => sub {
 	requires 'Lingua::Conjunction';
 	requires 'Test::DescribeMe';
 	requires 'Test::More', '0.98';
+	requires 'Test::Needs';
 	requires 'Test::Permissions';
+	suggests 'Database::Abstraction', '0.57';
 };
 
 on 'develop' => sub {

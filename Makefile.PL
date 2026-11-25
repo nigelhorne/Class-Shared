@@ -71,6 +71,7 @@ WriteMakefile(
 		'Lingua::Conjunction' => 0,
 		'Test::DescribeMe' => 0,
 		'Test::More'          => '0.98',
+		'Test::Needs'         => 0,
 		'Test::Permissions'   => 0,
 	},
 	META_MERGE       => {
@@ -83,6 +84,13 @@ WriteMakefile(
 				# a unix socket never needs it.
 				recommends => {
 					'IO::Socket::SSL' => '2.0',
+				},
+			},
+			test => {
+				# Used by t/13-database-abstraction.t as a real-world example
+				# of a class to share; the test is skipped without it.
+				suggests => {
+					'Database::Abstraction' => '0.57',
 				},
 			},
 			develop => {

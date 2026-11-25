@@ -41,6 +41,11 @@ Revision history for Class-Shared
           environment variables and from class-shared-backend.yml).  What the
           caller passes always wins.  New dependencies: Object::Configure,
           Params::Get, Params::Validate::Strict.
+        - t/13-database-abstraction.t shares a Database::Abstraction table
+          through a backend, and checks that every answer is the same as the
+          class gives when called directly.  It is skipped unless
+          Database::Abstraction is installed.  New test requirement:
+          Test::Needs.
         - Class::Shared::Backend writes its log with Log::Abstraction.  The
           line format is unchanged; a multi-line message now has a tab after
           each line break instead of the breaks being turned into spaces.
