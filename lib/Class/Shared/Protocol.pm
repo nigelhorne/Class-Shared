@@ -227,12 +227,16 @@ Class::Shared::Protocol - framing for Class::Shared's socket protocol
 
 =head1 SYNOPSIS
 
+    # $socket is a connected socket to a backend:
+    my $socket;
+
     my ($bytes, $error) = Class::Shared::Protocol::encode_frame({ op => 'ping' });
     Class::Shared::Protocol::write_all($socket, $bytes);
 
     my ($message, $read_error) = Class::Shared::Protocol::read_frame($socket);
 
     # With a shared secret, every frame is authenticated:
+    my $secret = 'the secret both ends were given';
     my ($signed, $sign_error) = Class::Shared::Protocol::encode_frame({ op => 'ping' }, $secret);
     my ($reply, $reply_error) = Class::Shared::Protocol::read_frame($socket, undef, $secret);
 

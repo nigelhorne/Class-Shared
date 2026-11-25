@@ -102,3 +102,9 @@ Revision history for Class-Shared
           sets only the read-only attribute that directories ignore, the answer
           is no, so the backend tests skip there rather than failing when a
           backend cannot start.
+
+        - Needs perl 5.026 or later.  The suite asks Test::Permissions whether
+          a directory here can really be made owner-only, and that module needs
+          5.026, so the prerequisite and the tests now agree: a perl too old for
+          it is refused when the distribution is installed rather than failing
+          later on a test dependency.

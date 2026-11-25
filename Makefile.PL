@@ -43,7 +43,7 @@ WriteMakefile(
 	VERSION_FROM     => 'lib/Class/Shared.pm',
 	AUTHOR		=> q{Nigel Horne <njh@nigelhorne.com>},
 	LICENSE          => 'gpl_2',
-	MIN_PERL_VERSION => '5.010',
+	MIN_PERL_VERSION => '5.026',
 	CONFIGURE_REQUIRES => {
 		'ExtUtils::MakeMaker' => '6.64',
 	}, dist => $dist,

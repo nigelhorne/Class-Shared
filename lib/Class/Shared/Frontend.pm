@@ -656,7 +656,7 @@ Class::Shared::Frontend - a stand-in for one object that lives in a backend
         ctor => [verbose => 1],
     );
 
-    my $answer = $simple->do_something($arg);
+    my $answer = $simple->do_something('input');
 
     # A backend on another machine, reached over TLS:
     my $remote = Class::Shared::Frontend->new('Class::Simple',

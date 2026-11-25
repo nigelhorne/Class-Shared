@@ -1134,6 +1134,7 @@ Class::Shared::Backend - load a class once and serve objects made from it
     )->run;
 
     # On another machine:
+    my $secret = 'the secret its clients were given too';
     Class::Shared::Backend->new(
         host     => '0.0.0.0',
         port     => 7000,
