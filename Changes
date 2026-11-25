@@ -28,10 +28,15 @@ Revision history for Class-Shared
           for five seconds (handshake_timeout, if you want another) instead of
           freezing every client being served, and frame reads are non-blocking
           as well: a client that sends half a frame, or half a TLS record, has
-          the rest buffered for it while everybody else is served, though a
-          client that asks for a reply and then stops reading it can still hold
-          up the loop, since replies are written synchronously.  The
+          the rest buffered for it while everybody else is served, and replies
+          are queued per client and written as the socket takes them, so a
+          client that asks for a reply and then stops reading holds only its
+          own, and is dropped once more than max_queued bytes are waiting for
+          it.  The
           token stays as a second, independent check on every frame, so a
           certificate is not a substitute for the secret and the secret is not
           a substitute for the certificate.
+        - The backend's log records every client it drops and why, so a
+          connection that ends other than by a clean shutdown of its object
+          leaves a trace there.
         - bin/class-shared for serve, status, stop and path.

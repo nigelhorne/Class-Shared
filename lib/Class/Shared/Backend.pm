@@ -22,6 +22,14 @@ our $DEFAULT_MAX_OBJECTS = 4096;
 # says nothing costs one connection slot for this long, not the whole backend.
 our $HANDSHAKE_TIMEOUT = 5;
 
+# How much may be waiting to be written to one client before it is dropped.
+# Replies are queued per connection and written from the loop as the socket
+# takes them, so this is what stops a client that asks for an answer and then
+# stops reading from holding that reply, and the memory for it, indefinitely.
+# The default is one maximum-size frame, so no reply the protocol allows is
+# refused for being large.
+our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
+
 # The backend loads one class, once, and holds many objects made from it: one
 # per frontend.  Clients talk to it over a unix socket or TCP.
 sub new {
@@ -91,6 +99,7 @@ sub new {
 		daemonize     => $opt{daemonize} ? 1 : 0,
 					max_clients   => $opt{max_clients} || $DEFAULT_MAX_CLIENTS,
 			max_objects   => $opt{max_objects} || $DEFAULT_MAX_OBJECTS,
+			max_queued    => defined $opt{max_queued} ? $opt{max_queued} : $MAX_QUEUED,
 			handshake_timeout => defined $opt{handshake_timeout}
 				? $opt{handshake_timeout}
 				: $HANDSHAKE_TIMEOUT,
@@ -301,12 +310,16 @@ sub _loop {
 
 			vec($rin, $fd, 1) = 1;
 
-			next unless $client->{handshaking};
-			$handshaking = 1;
+			if ($client->{handshaking}) {
+				$handshaking = 1;
 
-			# A handshake can want to write as well (TLS 1.3 tickets, a full
-			# send buffer), so wait for that only when it asked for it.
-			vec($win, $fd, 1) = 1 if $client->{want_write};
+				# A handshake can want to write as well (TLS 1.3 tickets, a
+				# full send buffer), so wait for that only when it asked.
+				vec($win, $fd, 1) = 1 if $client->{want_write};
+			} elsif (length $client->{outbuf}) {
+				# A queued reply is waiting for the socket to take it.
+				vec($win, $fd, 1) = 1;
+			}
 		}
 
 		# With a handshake in progress, wake up now and then: a peer that
@@ -329,13 +342,17 @@ sub _loop {
 			my $fd = fileno($client->{fh});
 			next unless defined $fd;
 
+			my $readable = vec($rout, $fd, 1);
+			my $writable = vec($wout, $fd, 1);
+
 			if ($client->{handshaking}) {
-				next unless vec($rout, $fd, 1)
-					|| ($client->{want_write} && vec($wout, $fd, 1));
+				next unless $readable || ($client->{want_write} && $writable);
 				$self->_continue_tls($client);
 			} else {
-				next unless vec($rout, $fd, 1);
-				$self->_serve_client($client);
+				next unless $readable || $writable;
+
+				$self->_serve_client($client) if $readable;
+				$self->_flush($client) if $writable && !$client->{closed};
 			}
 
 			last if $self->{stop};
@@ -387,12 +404,18 @@ sub _accept {
 
 	fcntl($fh, F_SETFD, FD_CLOEXEC);
 
+	# A unix client that stops reading must not hold the loop either, so its
+	# socket is non-blocking from here on, as a TLS one is from _start_tls.
+	$fh->blocking(0);
+
 	my $client = {
 		fh      => $fh,
 		buffer  => '',
+		outbuf  => '',
 		greeted => 0,
 		serial  => $self->{next_serial}++,
 		objects => {},
+		closed  => 0,
 	};
 
 	if (defined $self->{host}) {
@@ -472,20 +495,35 @@ sub _continue_tls {
 	return;
 }
 
-# True when a failed read means "not yet", not "gone": a non-blocking socket
-# with nothing to give, or a TLS record whose first bytes have arrived and whose
-# rest has not.
+# True when a failed read or write means "not yet", not "gone": a non-blocking
+# socket with nothing to give (or no room to take), or a TLS layer waiting for
+# the other direction.  The errno it looks at is the one the call that just
+# failed produced, never one left over from before it: the caller clears $!.
 sub _would_block {
-	my ($self, $fh) = @_;
+	my ($self, $fh, $direction) = @_;
+
+	$direction = 'read' unless defined $direction;
 
 	return 1 if $!{EAGAIN} || $!{EWOULDBLOCK};
-	return 1 if $fh->can('want_read') && $fh->want_read;
+
+	my $want = "want_$direction";
+	return 1 if $fh->can($want) && $fh->$want;
+
+	# A write can be waiting on a TLS layer that has to read something first.
+	return 1 if $direction eq 'write' && $fh->can('want_read') && $fh->want_read;
 
 	return 0;
 }
 
 sub _serve_client {
 	my ($self, $client) = @_;
+
+	# errno outlives a call, and a TLS read can fail for its own reasons
+	# without touching it, so clear it and let only this sysread supply the
+	# EAGAIN that means "not yet".  Otherwise a genuine TLS error could be
+	# mistaken for half a frame and the client would be kept rather than
+	# dropped.
+	$! = 0;
 
 	my $read = sysread($client->{fh}, my $chunk, 65536);
 
@@ -495,7 +533,7 @@ sub _serve_client {
 		# only ever delays itself.
 		return 1 if $self->_would_block($client->{fh});
 
-		$self->_drop_client($client, "read error: $!");
+		$self->_drop_client($client, 'read error: ' . ($! || 'unknown error'));
 		return;
 	}
 
@@ -541,6 +579,7 @@ sub _serve_client {
 
 		$self->_send($client, $response) if defined $response;
 
+		last if $client->{closed};
 		last if $self->{stop};
 	}
 
@@ -551,6 +590,15 @@ sub _serve_client {
 # DESTROY runs here rather than being lost with a dead client.
 sub _drop_client {
 	my ($self, $client, $reason) = @_;
+
+	return 1 if $client->{closed};
+
+	$self->_log('dropped a client: ' . (defined $reason && length $reason ? $reason : 'no reason given'));
+
+	# Whatever was waiting to be written goes with the connection: there is
+	# nobody left to read it.
+	$client->{closed} = 1;
+	$client->{outbuf} = '';
 
 	my $owned = $client->{objects} || {};
 	for my $id (keys %{$owned}) {
@@ -581,10 +629,50 @@ sub _send {
 
 	return unless defined $bytes;
 
-	my ($ok, $write_error) = Class::Shared::Protocol::write_all($client->{fh}, $bytes);
-	$self->_drop_client($client, $write_error) unless $ok;
+	# Measure the queue before any of this reply goes out, so the limit is on
+	# what the backend is holding for this client and not on how much of it
+	# the kernel happened to take.
+	my $queued = length($client->{outbuf}) + length($bytes);
+	if ($queued > $self->{max_queued}) {
+		$self->_drop_client($client, 'a reply of ' . length($bytes)
+			. " bytes leaves $queued waiting to be written, more than the "
+			. "$self->{max_queued} a client may hold");
+		return;
+	}
 
-	return $ok;
+	$client->{outbuf} .= $bytes;
+
+	return $self->_flush($client);
+}
+
+# Write as much of a client's queue as the socket will take right now.  What is
+# left waits for the loop, which asks for writability again rather than
+# sitting here until the client reads.
+sub _flush {
+	my ($self, $client) = @_;
+
+	return 1 if $client->{closed} || !length $client->{outbuf};
+
+	# errno outlives a call, and a TLS write can fail without touching it.
+	$! = 0;
+
+	my $written = syswrite($client->{fh}, $client->{outbuf});
+
+	if (!defined $written) {
+		return 1 if $self->_would_block($client->{fh}, 'write');
+		$self->_drop_client($client, 'write error: ' . ($! || 'unknown error'));
+		return;
+	}
+
+	if ($written == 0) {
+		$self->_drop_client($client, 'write error: peer closed the connection');
+		return;
+	}
+
+	substr($client->{outbuf}, 0, $written, '');
+
+	# Anything still queued puts the fd back in the loop's writable set.
+	return 1;
 }
 
 # ------------------------------------------------------------- request ops
@@ -818,7 +906,10 @@ sub _cleanup {
 	unlink $self->{socket} if defined $self->{socket};
 
 	for my $client (values %{$self->{clients}}) {
-		close $client->{fh};
+		# A reply that was queued when the backend stopped, such as the one
+		# that asked it to stop, gets one last chance to go out.
+		$self->_flush($client) unless $client->{closed};
+		close $client->{fh} unless $client->{closed};
 	}
 
 	# Every object the backend still holds is destroyed here, once, in the
@@ -979,7 +1070,8 @@ digest at all.  See L</SECURITY>.
 
 =item log
 
-Log file.  Defaults to the control path with C<.log> appended.
+Log file.  Defaults to the control path with C<.log> appended.  Every client
+the backend drops is written there with the reason it was dropped.
 
 =item daemonize
 
@@ -997,6 +1089,14 @@ closed and its frontend reports a failed connection.
 =item max_objects
 
 How many objects to hold before refusing to construct more.  Default 4096.
+
+=item max_queued
+
+How many bytes may be waiting to be written to one client before it is dropped.
+Default one maximum-size frame (64 MiB) plus a little, so no reply the protocol
+allows is refused for being large.  Lower it to cap what a client that asks and
+does not read can hold; a reply larger than the setting is then dropped rather
+than queued.
 
 =item start_timeout
 
@@ -1129,9 +1229,13 @@ certificates, for the tests.
 Frame reads are non-blocking too.  A connection that stops halfway through a
 frame, or halfway through the TLS record carrying it, keeps what has arrived in
 its own buffer; the loop goes on serving everyone else and resumes that
-connection when the rest arrives.  Writes are the remaining place where one
-connection can hold up the loop: a client that asks for a reply and then stops
-reading it is still written to synchronously.
+connection when the rest arrives.
+
+Replies are queued per connection and written as the socket takes them, so a
+client that asks for an answer and then stops reading holds its own reply, not
+the loop.  What it may hold is bounded by C<max_queued>: once more than that is
+waiting to be written to it, the client is dropped, since the alternative is
+holding the backend's memory for as long as it chooses to stay connected.
 
 The handshake is not done in C<accept>.  An accepted socket starts its TLS
 layer without a handshake and then finishes it, a little at a time, from the

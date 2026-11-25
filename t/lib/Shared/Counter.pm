@@ -50,6 +50,14 @@ sub echo_list {
 
 sub maybe_undef { return undef }
 
+# A reply big enough to fill a socket and then some, for the tests that care
+# what a client does with an answer it never reads.
+sub blob {
+	my ($self, $size) = @_;
+	$size = 0 unless defined $size;
+	return 'x' x $size;
+}
+
 sub boom {
 	my $self = shift;
 	die "kaboom: @_";
