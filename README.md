@@ -288,9 +288,12 @@ does not reproduce it.
 
 ## Author
 
-Nigel Horne
+Nigel Horne, `<njh at nigelhorne.com>`
 
-## License
+## Licence and Copyright
 
-This module is free software; you can redistribute it and/or modify it under
-the same terms as Perl itself.
+Copyright 2026 Nigel Horne.
+
+Usage is subject to the GPL2 licence terms.
+If you use it,
+please let me know.

@@ -28,16 +28,26 @@ talk to a backend running elsewhere.
 NOTICE
 }
 
+my $dist = {
+	COMPRESS => 'gzip -9f',	# Compress tarball using gzip
+	SUFFIX => 'gz',	# File suffix for tarball
+};
+
+if($^O eq 'darwin') {
+	$dist->{'TAR'} = 'gtar';
+}
+
 WriteMakefile(
 	NAME             => 'Class::Shared',
+	ABSTRACT_FROM     => 'lib/Class/Shared.pm',
 	VERSION_FROM     => 'lib/Class/Shared.pm',
-	ABSTRACT         => 'Share one instance of a class between processes over a socket',
-	AUTHOR           => 'Nigel Horne',
-	LICENSE          => 'perl_5',
+	AUTHOR		=> q{Nigel Horne <njh@nigelhorne.com>},
+	LICENSE          => 'gpl_2',
 	MIN_PERL_VERSION => '5.010',
 	CONFIGURE_REQUIRES => {
 		'ExtUtils::MakeMaker' => '6.64',
-	},
+	}, dist => $dist,
+	clean		=> { FILES => 'Class-Shared-*' },
 	EXE_FILES        => ['bin/class-shared'],
 	PREREQ_PM        => {
 		'Digest::SHA'      => 0,
@@ -55,6 +65,7 @@ WriteMakefile(
 		'File::Temp'          => 0,
 		'IO::Socket::SSL'     => 0,
 		'Lingua::Conjunction' => 0,
+		'Test::DescribeMe' => 0,
 		'Test::More'          => '0.98',
 	},
 	META_MERGE       => {
@@ -75,11 +86,22 @@ WriteMakefile(
 					'Pod::Github' => '0.04',
 				},
 			},
-		},
-		resources => {
-			license => 'https://dev.perl.org/licenses/',
-		},
-	},
+		}, resources => {
+			homepage => 'https://metacpan.org/pod/Class::Shared',
+			repository => {
+				type => 'git',
+				url => 'git://github.com/nigelhorne/Class-Shared.git',
+				web => 'https://github.com/nigelhorne/Class-Shared',
+				# license => 'http://dev.perl.org/licenses/',
+			}, bugtracker => {
+				web => 'https://rt.cpan.org/Public/Dist/Display.html?Name=Class-Shared',
+				url => 'https://rt.cpan.org/Public/Dist/Display.html?Name=Class-Shared',
+				# web => 'https://github.com/nigelhorne/Class-Shared/issues',
+				# url => 'https://github.com/nigelhorne/Class-Shared/issues',
+				mailto => 'bug-Class-Shared@rt.cpan.org'
+			}
+		}
+	}
 );
 
 # README.md is generated from the POD by Pod::Github's pod2github: it is the
