@@ -20,7 +20,7 @@ https://pjcj.net
 <h1>Branch Coverage</h1>
 <table>
 <tr><td class="h" align="right">File:</td><td align="left">bin/class-shared</td></tr>
-<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">81.7%</td></tr>
+<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">82.3%</td></tr>
 </table>
 <div><br/></div>
 <table>
@@ -59,40 +59,42 @@ https://pjcj.net
 <tr><td class="h"><a id="L212">212</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($opt{&#39;listen&#39;} =~ /\Atcp:(.+):(\d+)\z/a) { }</td></tr>
 <tr><td class="h"></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">elsif ($opt{&#39;listen&#39;} =~ /\Aunix:(.+)\z/) { }</td></tr>
 <tr><td class="h"><a id="L221">221</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host xor defined $port</td></tr>
-<tr><td class="h"><a id="L234">234</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $opt{&#39;socket&#39;} &amp;&amp; length $opt{&#39;socket&#39;} ? :</td></tr>
-<tr><td class="h"><a id="L236">236</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $path</td></tr>
-<tr><td class="h"><a id="L242">242</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $opt{&#39;log&#39;} and length $opt{&#39;log&#39;}</td></tr>
-<tr><td class="h"><a id="L248">248</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $opt{&#39;token_file&#39;} and length $opt{&#39;token_file&#39;}</td></tr>
-<tr><td class="h"><a id="L253">253</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $host</td></tr>
-<tr><td class="h"><a id="L264">264</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $host)</td></tr>
-<tr><td class="h"><a id="L266">266</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $tls{$_}</td></tr>
+<tr><td class="h"><a id="L225">225</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host and defined $opt{&#39;socket&#39;} and length $opt{&#39;socket&#39;}</td></tr>
+<tr><td class="h"><a id="L237">237</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $opt{&#39;socket&#39;} &amp;&amp; length $opt{&#39;socket&#39;} ? :</td></tr>
+<tr><td class="h"><a id="L239">239</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $path</td></tr>
+<tr><td class="h"><a id="L245">245</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $opt{&#39;log&#39;} and length $opt{&#39;log&#39;}</td></tr>
+<tr><td class="h"><a id="L251">251</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $opt{&#39;token_file&#39;} and length $opt{&#39;token_file&#39;}</td></tr>
+<tr><td class="h"><a id="L256">256</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $host</td></tr>
+<tr><td class="h"><a id="L267">267</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $host)</td></tr>
+<tr><td class="h"><a id="L269">269</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $tls{$_}</td></tr>
 <tr><td class="h"></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if grep {length $tls{$_} if defined $tls{$_};} keys %tls</td></tr>
-<tr><td class="h"><a id="L270">270</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($role eq &quot;server&quot;)</td></tr>
-<tr><td class="h"><a id="L273">273</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $tls{&#39;tls_fingerprint&#39;} and length $tls{&#39;tls_fingerprint&#39;}</td></tr>
-<tr><td class="h"><a id="L277">277</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if grep {not defined $tls{$_} &amp;&amp; length $tls{$_};} &quot;tls_cert&quot;, &quot;tls_key&quot;, &quot;tls_ca&quot;</td></tr>
-<tr><td class="h"><a id="L286">286</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if grep {not defined $tls{$_} &amp;&amp; length $tls{$_};} &quot;tls_cert&quot;, &quot;tls_key&quot;</td></tr>
-<tr><td class="h"><a id="L291">291</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $has_ca or $has_pin</td></tr>
-<tr><td class="h"><a id="L295">295</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $has_ca and $has_pin</td></tr>
-<tr><td class="h"><a id="L299">299</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($has_pin) { }</td></tr>
-<tr><td class="h"><a id="L317">317</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $host) { }</td></tr>
-<tr><td class="h"><a id="L334">334</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($sock)</td></tr>
-<tr><td class="h"><a id="L336">336</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $why and length $why</td></tr>
-<tr><td class="h"><a id="L344">344</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (-e $where)</td></tr>
-<tr><td class="h"><a id="L346">346</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $safe</td></tr>
-<tr><td class="h"><a id="L350">350</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $sock</td></tr>
-<tr><td class="h"><a id="L359">359</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($hello)</td></tr>
-<tr><td class="h"><a id="L365">365</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $host and defined $hello_error and $hello_error =~ /closed by peer|read failed|write failed/)</td></tr>
-<tr><td class="h"><a id="L379">379</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $secret)</td></tr>
-<tr><td class="h"><a id="L389">389</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless ($hello-&gt;{&#39;ok&#39;})</td></tr>
-<tr><td class="h"><a id="L397">397</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $response</td></tr>
-<tr><td class="h"><a id="L406">406</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $bytes</td></tr>
-<tr><td class="h"><a id="L409">409</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $ok</td></tr>
-<tr><td class="h"><a id="L412">412</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $response</td></tr>
-<tr><td class="h"><a id="L419">419</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host</td></tr>
-<tr><td class="h"><a id="L428">428</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if -e $socket</td></tr>
-<tr><td class="h"><a id="L443">443</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (print {*STDOUT;} $text and &quot;STDOUT&quot;-&gt;flush)</td></tr>
-<tr><td class="h"><a id="L453">453</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $sock</td></tr>
-<tr><td class="h"><a id="L460">460</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $message</td></tr>
+<tr><td class="h"><a id="L273">273</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($role eq &quot;server&quot;)</td></tr>
+<tr><td class="h"><a id="L276">276</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if defined $tls{&#39;tls_fingerprint&#39;} and length $tls{&#39;tls_fingerprint&#39;}</td></tr>
+<tr><td class="h"><a id="L280">280</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if grep {not defined $tls{$_} &amp;&amp; length $tls{$_};} &quot;tls_cert&quot;, &quot;tls_key&quot;, &quot;tls_ca&quot;</td></tr>
+<tr><td class="h"><a id="L289">289</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if grep {not defined $tls{$_} &amp;&amp; length $tls{$_};} &quot;tls_cert&quot;, &quot;tls_key&quot;</td></tr>
+<tr><td class="h"><a id="L294">294</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $has_ca or $has_pin</td></tr>
+<tr><td class="h"><a id="L298">298</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $has_ca and $has_pin</td></tr>
+<tr><td class="h"><a id="L302">302</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($has_pin) { }</td></tr>
+<tr><td class="h"><a id="L318">318</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $value</td></tr>
+<tr><td class="h"><a id="L332">332</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $host) { }</td></tr>
+<tr><td class="h"><a id="L349">349</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($sock)</td></tr>
+<tr><td class="h"><a id="L351">351</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $why and length $why</td></tr>
+<tr><td class="h"><a id="L359">359</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (-e $where)</td></tr>
+<tr><td class="h"><a id="L361">361</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $safe</td></tr>
+<tr><td class="h"><a id="L365">365</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $sock</td></tr>
+<tr><td class="h"><a id="L374">374</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($hello)</td></tr>
+<tr><td class="h"><a id="L380">380</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $host and defined $hello_error and $hello_error =~ /closed by peer|read failed|write failed/)</td></tr>
+<tr><td class="h"><a id="L394">394</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $secret)</td></tr>
+<tr><td class="h"><a id="L404">404</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless ($hello-&gt;{&#39;ok&#39;})</td></tr>
+<tr><td class="h"><a id="L412">412</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $response</td></tr>
+<tr><td class="h"><a id="L421">421</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $bytes</td></tr>
+<tr><td class="h"><a id="L424">424</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $ok</td></tr>
+<tr><td class="h"><a id="L427">427</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $response</td></tr>
+<tr><td class="h"><a id="L434">434</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host</td></tr>
+<tr><td class="h"><a id="L443">443</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if -e $socket</td></tr>
+<tr><td class="h"><a id="L458">458</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (print {*STDOUT;} $text and &quot;STDOUT&quot;-&gt;flush)</td></tr>
+<tr><td class="h"><a id="L468">468</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $sock</td></tr>
+<tr><td class="h"><a id="L475">475</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $message</td></tr>
 </table>
 </body>
 </html>

@@ -20,7 +20,7 @@ https://pjcj.net
 <h1>Branch Coverage</h1>
 <table>
 <tr><td class="h" align="right">File:</td><td align="left">blib/lib/Class/Shared/Protocol.pm</td></tr>
-<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">79.2%</td></tr>
+<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">78.0%</td></tr>
 </table>
 <div><br/></div>
 <table>
@@ -32,35 +32,40 @@ https://pjcj.net
 <tr><td class="h"><a id="L61">61</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($@)</td></tr>
 <tr><td class="h"><a id="L70">70</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $message</td></tr>
 <tr><td class="h"><a id="L90">90</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $written)</td></tr>
-<tr><td class="h"><a id="L93">93</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($written == 0)</td></tr>
-<tr><td class="h"><a id="L109">109</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $header</td></tr>
-<tr><td class="h"><a id="L112">112</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $secret ? :</td></tr>
-<tr><td class="h"><a id="L114">114</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $length &gt; $room</td></tr>
-<tr><td class="h"><a id="L118">118</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $payload</td></tr>
-<tr><td class="h"><a id="L134">134</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (&amp;Scalar::Util::blessed($fh) and $fh-&gt;can(&quot;pending&quot;) and $fh-&gt;pending)</td></tr>
-<tr><td class="h"><a id="L138">138</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $pending</td></tr>
-<tr><td class="h"><a id="L139">139</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $pending == 0</td></tr>
-<tr><td class="h"><a id="L144">144</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $timeout)</td></tr>
-<tr><td class="h"><a id="L148">148</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if not defined $ready or $ready &lt;= 0</td></tr>
-<tr><td class="h"><a id="L154">154</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $got)</td></tr>
+<tr><td class="h"><a id="L93">93</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if $!{&#39;EINTR&#39;}</td></tr>
+<tr><td class="h"><a id="L96">96</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($written == 0)</td></tr>
+<tr><td class="h"><a id="L112">112</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $header</td></tr>
+<tr><td class="h"><a id="L115">115</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $secret ? :</td></tr>
+<tr><td class="h"><a id="L117">117</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $length &gt; $room</td></tr>
+<tr><td class="h"><a id="L121">121</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $payload</td></tr>
+<tr><td class="h"><a id="L137">137</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (&amp;Scalar::Util::blessed($fh) and $fh-&gt;can(&quot;pending&quot;) and $fh-&gt;pending)</td></tr>
+<tr><td class="h"><a id="L141">141</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if not defined $pending and $!{&#39;EINTR&#39;}</td></tr>
+<tr><td class="h"><a id="L142">142</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $pending</td></tr>
+<tr><td class="h"><a id="L143">143</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $pending == 0</td></tr>
+<tr><td class="h"><a id="L148">148</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $timeout and not _wait_readable($fh, $timeout)</td></tr>
+<tr><td class="h"><a id="L153">153</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $got)</td></tr>
+<tr><td class="h"><a id="L154">154</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $!{&#39;EINTR&#39;}</td></tr>
 <tr><td class="h"><a id="L157">157</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($got == 0)</td></tr>
-<tr><td class="h"><a id="L173">173</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $$buffer_ref &lt; 4</td></tr>
-<tr><td class="h"><a id="L176">176</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $secret ? :</td></tr>
-<tr><td class="h"><a id="L178">178</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $length &gt; $room</td></tr>
-<tr><td class="h"><a id="L181">181</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $$buffer_ref &lt; 4 + $length</td></tr>
-<tr><td class="h"><a id="L187">187</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $error</td></tr>
-<tr><td class="h"><a id="L205">205</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless my $type = &amp;Scalar::Util::reftype($item)</td></tr>
-<tr><td class="h"><a id="L206">206</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if $seen{&amp;Scalar::Util::refaddr($item)}++</td></tr>
-<tr><td class="h"><a id="L207">207</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if ++$depth &gt; $MAX_DEPTH</td></tr>
-<tr><td class="h"><a id="L209">209</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if ($type eq &#39;ARRAY&#39;) { }</td></tr>
+<tr><td class="h"><a id="L184">184</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $ready &gt; 0</td></tr>
+<tr><td class="h"><a id="L185">185</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $ready &lt; 0 and $!{&#39;EINTR&#39;}</td></tr>
+<tr><td class="h"><a id="L188">188</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $left &lt; 0</td></tr>
+<tr><td class="h"><a id="L200">200</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $$buffer_ref &lt; 4</td></tr>
+<tr><td class="h"><a id="L203">203</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">defined $secret ? :</td></tr>
+<tr><td class="h"><a id="L205">205</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $length &gt; $room</td></tr>
+<tr><td class="h"><a id="L208">208</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $$buffer_ref &lt; 4 + $length</td></tr>
+<tr><td class="h"><a id="L214">214</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $error</td></tr>
+<tr><td class="h"><a id="L232">232</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless my $type = &amp;Scalar::Util::reftype($item)</td></tr>
+<tr><td class="h"><a id="L233">233</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if $seen{&amp;Scalar::Util::refaddr($item)}++</td></tr>
+<tr><td class="h"><a id="L234">234</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if ++$depth &gt; $MAX_DEPTH</td></tr>
+<tr><td class="h"><a id="L236">236</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if ($type eq &#39;ARRAY&#39;) { }</td></tr>
 <tr><td class="h"></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">elsif ($type eq &#39;HASH&#39;) { }</td></tr>
 <tr><td class="h"></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">elsif ($type eq &#39;REF&#39;) { }</td></tr>
-<tr><td class="h"><a id="L230">230</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $secret)</td></tr>
-<tr><td class="h"><a id="L231">231</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $payload &lt; $DIGEST_SIZE</td></tr>
-<tr><td class="h"><a id="L237">237</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless _authentic($secret, $body, $digest)</td></tr>
-<tr><td class="h"><a id="L241">241</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if $check and not &amp;$check($body)</td></tr>
-<tr><td class="h"><a id="L264">264</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless length $expected == length $digest</td></tr>
-<tr><td class="h"><a id="L272">272</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">$difference == 0 ? :</td></tr>
+<tr><td class="h"><a id="L257">257</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $secret)</td></tr>
+<tr><td class="h"><a id="L258">258</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if length $payload &lt; $DIGEST_SIZE</td></tr>
+<tr><td class="h"><a id="L264">264</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless _authentic($secret, $body, $digest)</td></tr>
+<tr><td class="h"><a id="L268">268</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if $check and not &amp;$check($body)</td></tr>
+<tr><td class="h"><a id="L291">291</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless length $expected == length $digest</td></tr>
+<tr><td class="h"><a id="L299">299</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">$difference == 0 ? :</td></tr>
 </table>
 </body>
 </html>
