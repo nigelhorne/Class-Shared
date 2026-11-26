@@ -33,11 +33,6 @@ use Shared::Command qw(run_command);
 my $dir = tempdir(CLEANUP => 1);
 my $counter = 'Shared::Counter';
 
-# The backend's "no such method" and "cannot call" messages are die()d without
-# a new line by Frontend.pm line 345, so Perl appends the frontend's own file
-# and line to a message that is meant for the user.
-my $PLACE_ADDED = 'Frontend.pm line 345: the backend message gets a source location appended';
-
 # Run $code, and return what it died with ('' if it did not) and every warning.
 # A hang is a failure, not a wait: the alarm turns it into an error.
 sub outcome {
@@ -217,10 +212,10 @@ for my $case (
 	['shared_call with no name',         sub { $second->shared_call },                     qr/no method name given/],
 	['shared_call(undef)',               sub { $second->shared_call(undef) },              qr/no method name given/],
 	['shared_call with an empty name',   sub { $second->shared_call('') },                 qr/no method name given/],
-	['a method the class does not have', sub { $second->no_such_method },                  qr/Shared::Counter has no method 'no_such_method'/, place => $PLACE_ADDED],
-	['a name with a space in it',        sub { $second->shared_call('foo bar') },          qr/'foo bar' is not a plain method name/, place => $PLACE_ADDED],
-	['the constructor, by name',         sub { $second->shared_call('new') },              qr/cannot call new\(\) through Class::Shared/, place => $PLACE_ADDED],
-	['the destructor, by name',          sub { $second->shared_call('DESTROY') },          qr/cannot call DESTROY\(\) through Class::Shared/, place => $PLACE_ADDED],
+	['a method the class does not have', sub { $second->no_such_method },                  qr/Shared::Counter has no method 'no_such_method'/],
+	['a name with a space in it',        sub { $second->shared_call('foo bar') },          qr/'foo bar' is not a plain method name/],
+	['the constructor, by name',         sub { $second->shared_call('new') },              qr/cannot call new\(\) through Class::Shared/],
+	['the destructor, by name',          sub { $second->shared_call('DESTROY') },          qr/cannot call DESTROY\(\) through Class::Shared/],
 ) {
 	my ($name, $code, $pattern, @todo) = @{$case};
 

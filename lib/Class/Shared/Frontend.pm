@@ -199,10 +199,14 @@ sub shared_close {
 
 	# The state is cleared whether or not the close worked: the connection is
 	# unusable either way, and a caller must not be left holding half of one.
-	$self->_close($self->{sock}, 'the connection to the backend');
+	# It is cleared first: a failed close carps, and Carp calls can() on the
+	# objects in the call stack, which would otherwise send a request down the
+	# handle that is being closed.
+	my $sock = $self->{sock};
 	$self->{sock} = undef;
 	$self->{id} = undef;
 	$self->{pid} = undef;
+	$self->_close($sock, 'the connection to the backend');
 
 	return 1;
 }
@@ -290,7 +294,11 @@ sub can {
 sub isa {
 	my ($self, $class) = @_;
 
-	return UNIVERSAL::isa($self, $class) unless ref $self && defined $class;
+	return UNIVERSAL::isa($self, $class) unless ref $self;
+
+	# UNIVERSAL::isa warns about an undefined class; no class is not a parent.
+	return 0 unless defined $class;
+
 	return 1 if $class eq 'Class::Shared::Frontend' or $class eq 'UNIVERSAL';
 
 	my $response = eval {
@@ -343,6 +351,10 @@ sub _invoke {
 		my $error = $response->{error};
 		$error = "Class::Shared: the backend for '$self->{class}' rejected '$method'"
 			unless defined $error && length $error;
+
+		# Thrown again with its original text (see the POD): without a final
+		# new line die would add this file and line to it.
+		$error .= "\n" unless $error =~ /\n\z/;
 		die $error;
 	}
 
@@ -481,6 +493,8 @@ sub _greet {
 # with a frame this side cannot read, so that case keeps the token wording.
 sub _first_exchange_failed {
 	my ($self, $error) = @_;
+
+	$error = 'no reason was given' unless defined $error;
 
 	if ($self->{transport} eq 'tcp' && defined $error
 		&& $error =~ /closed by peer|read failed|write failed/)

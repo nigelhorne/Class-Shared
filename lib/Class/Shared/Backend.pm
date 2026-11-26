@@ -503,16 +503,28 @@ sub _setup_tcp {
 
 	# One context for every connection: the certificates are read and checked
 	# once, and each accepted socket starts its handshake against it.
-	my $context = IO::Socket::SSL::SSL_Context->new(
-		SSL_server      => 1,
-		SSL_version     => $Class::Shared::TLS_VERSIONS,
-		SSL_cert_file   => $self->{tls_cert},
-		SSL_key_file    => $self->{tls_key},
-		SSL_ca_file     => $self->{tls_ca},
-		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER()
-			| IO::Socket::SSL::SSL_VERIFY_FAIL_IF_NO_PEER_CERT(),
-	) or die "cannot set up TLS for $self->{host}:$self->{port}: "
-		. (IO::Socket::SSL::errstr() || "$!" || 'unknown error') . "\n";
+	# The context croaks for a file it cannot use, and only returns false
+	# for some other faults, so both are turned into the one message.
+	my $context = eval {
+		IO::Socket::SSL::SSL_Context->new(
+			SSL_server      => 1,
+			SSL_version     => $Class::Shared::TLS_VERSIONS,
+			SSL_cert_file   => $self->{tls_cert},
+			SSL_key_file    => $self->{tls_key},
+			SSL_ca_file     => $self->{tls_ca},
+			SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER()
+				| IO::Socket::SSL::SSL_VERIFY_FAIL_IF_NO_PEER_CERT(),
+		);
+	};
+
+	if (!$context) {
+		my $why = $@;
+		$why =~ s/ at \S+ line \d+\.?\s*\z//;
+		$why =~ s/\s+\z//;
+		$why = IO::Socket::SSL::errstr() || "$!" || 'unknown error' unless length $why;
+
+		die "cannot set up TLS for $self->{host}:$self->{port}: $why\n";
+	}
 
 	$self->{tls_context} = $context;
 
@@ -1037,9 +1049,13 @@ sub _dispatch {
 sub _op_hello {
 	my ($self, $client, $message) = @_;
 
-	my $proto = defined $message->{proto} ? $message->{proto} : 0;
+	# Compared as text, not as a number.  As a number, "2x" or " 2" would pass
+	# as 2 (and "x" would warn), and a reference would be compared by its
+	# address.  The version is written the one way, so only that way is
+	# accepted.
+	my $proto = defined $message->{proto} && !ref $message->{proto} ? $message->{proto} : 0;
 
-	if ($proto != $Class::Shared::PROTOCOL_VERSION) {
+	if ($proto ne $Class::Shared::PROTOCOL_VERSION) {
 		return _failure('protocol',
 			"protocol version mismatch: client speaks $proto, this backend speaks "
 			. $Class::Shared::PROTOCOL_VERSION);
@@ -1162,6 +1178,11 @@ sub _op_call {
 	# that can() normally returns cannot cross the wire.
 	if ($method eq 'can' or $method eq 'isa') {
 		my $name = $args->[0];
+
+		# No name is not a class or method the object has; passing undef on
+		# would only make perl warn about it.
+		return { ok => 1, result => [0] } unless defined $name;
+
 		my $answer = eval { $object->$method($name) ? 1 : 0 };
 		return _failure('die', "$@") if $@;
 		return { ok => 1, result => [$answer] };

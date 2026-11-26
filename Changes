@@ -17,6 +17,18 @@ Revision history for Class-Shared
         - Regular expressions audited: \d is now ASCII-only (/a) for the object id
           and the --listen port, and the class-name pattern is possessive, so a
           long bad name is refused in constant extra work (t/18-regex.t).
+        - t/function.t: white-box tests of every function in lib/, helpers
+          included, with the callees mocked.  They found and fixed: a frame
+          cut short in transit was read as a message that was undef; a failed
+          close of a frontend's socket sent a request down the handle being
+          closed (Carp asks every object in the stack whether it can);
+          isa(undef) warned; the text of an exception from the target gained
+          a file and line of the frontend's when it had no final new line;
+          a handshake naming the protocol as "2x" was accepted; a bad TLS
+          certificate on the listener gave perl's own message and not the
+          module's; can()/isa() with no name warned in the backend.  The
+          tests need Test::Mockingbird, Test::Returns and Test::Memory::Cycle,
+          and are skipped without them.
         - t/17-first-time-user.t: first-time-user flows (minimal, odd-order and
           repeated calls to the frontend, helpers, protocol, backend and
           command), each asserting an explicit one-line failure or result.

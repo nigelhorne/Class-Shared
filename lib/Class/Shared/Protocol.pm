@@ -51,6 +51,12 @@ sub take_payload {
 		return (undef, "cannot deserialise message: $error");
 	}
 
+	# thaw returns undef, without dying, for an image that is cut short.  That
+	# must not look like a frame that was read successfully: the caller would
+	# get no message and no error to report.
+	return (undef, 'cannot deserialise message: the image is incomplete')
+		unless defined $message;
+
 	return ($message, undef);
 }
 

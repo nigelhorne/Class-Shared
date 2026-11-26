@@ -44,6 +44,7 @@ t/certs/other-server-key.pem
 t/certs/other-server.pem
 t/certs/server-key.pem
 t/certs/server.pem
+t/function.t
 t/lib/Shared/Cities.pm
 t/lib/Shared/Command.pm
 t/lib/Shared/Conjunction.pm
