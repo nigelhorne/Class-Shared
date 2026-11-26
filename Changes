@@ -2,6 +2,13 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - t/edge_cases.t: hostile and boundary tests.  Three faults found and
+          fixed.  read_secret read a whole file with no limit, so a token file
+          of /dev/zero used all memory; it now refuses more than 65536 bytes.
+          A backend that ran out of file descriptors spun a processor, because
+          the connection it could not accept kept the listener readable; it now
+          pauses and logs once.  A lost connection with no stated reason warned
+          about an uninitialised value in the frontend.
         - The backend stops a call to the target that runs too long.  New option
           call_timeout (default 60 seconds, 0 for no limit) and a new reply kind,
           timeout; without it one method that never returned held every client,

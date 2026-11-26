@@ -59,6 +59,10 @@ our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
 # taking bytes is not dropped early by the second hand.
 our $WRITE_TIMEOUT = 30;
 
+# How long, in seconds, the listener is left alone after accept() failed for
+# want of file descriptors or memory.
+our $ACCEPT_PAUSE = 0.1;
+
 # How long one call to a target (a method, or its constructor) may run, in
 # seconds.  The backend runs one request at a time, so a call that does not
 # return holds every client; this is what ends it.  0 means no limit.
@@ -607,6 +611,19 @@ sub _loop {
 			$timeout = $wait if !defined $timeout || $wait < $timeout;
 		}
 
+		# After accept() ran out of descriptors the waiting connection keeps the
+		# listener readable, so watching it would spin the processor.  It is left
+		# out of the select for a short while instead.
+		if (defined $self->{accept_after}) {
+			my $wait = $self->{accept_after} - Time::HiRes::time();
+			if ($wait > 0) {
+				vec($rin, fileno($self->{listener}), 1) = 0;
+				$timeout = $wait if !defined $timeout || $wait < $timeout;
+			} else {
+				delete $self->{accept_after};
+			}
+		}
+
 		my $ready = select(my $rout = $rin, my $wout = $win, undef, $timeout);
 
 		$self->_expire_handshakes if $handshaking;
@@ -686,7 +703,16 @@ sub _accept {
 	my $self = shift;
 
 	my $fh = $self->{listener}->accept;
-	return unless $fh;
+	if (!$fh) {
+		if ($!{EMFILE} || $!{ENFILE} || $!{ENOBUFS} || $!{ENOMEM}) {
+			# Logged once for each shortage, not once for each attempt.
+			$self->_log("cannot accept a connection: $!", 'warn')
+				unless $self->{accept_failing}++;
+			$self->{accept_after} = Time::HiRes::time() + $ACCEPT_PAUSE;
+		}
+		return;
+	}
+	delete $self->{accept_failing};
 
 	if (keys %{$self->{clients}} >= $self->{max_clients}) {
 		# A unix client can be told, signed like every other frame.  A TCP

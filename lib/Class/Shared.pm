@@ -292,8 +292,9 @@ file name instead and let this function read it.
 
 B<Side effects:> opens, reads and closes the file.
 
-B<Dies> if no file name is given, if the file cannot be read, or if the secret
-is empty after the end of it has been trimmed.
+B<Dies> if no file name is given, if the file cannot be read, if it is larger
+than 65536 bytes (which also refuses an endless file such as F</dev/zero>), or
+if the secret is empty after the end of it has been trimmed.
 
 =head3 API SPECIFICATION
 
@@ -311,21 +312,32 @@ is empty after the end of it has been trimmed.
 
 # A shared secret for a backend listening on a network socket.  Never pass
 # secrets on a command line: give a file and let the caller read it.
+# The most read_secret accepts, in bytes.  A token is a line of text.
+our $MAX_SECRET = 65536;
+
 sub read_secret {
 	my $path = $_[0];
 
 	die "Class::Shared: no token file given\n" unless defined $path && length $path;
 
 	open(my $fh, '<', $path) or die "Class::Shared: cannot read $path: $!\n";
-	my $secret = do { local $/; <$fh> };
 
-	# Some systems (macOS) let a directory be opened and only fail on the
-	# read.  Reading an empty file gives '', so undef means the read failed.
-	die "Class::Shared: cannot read $path: $!\n" unless defined $secret;
+	# One byte more than is allowed is asked for, and no more: a "file" such as
+	# /dev/zero never ends, and reading it whole would use all the memory.
+	my $secret = '';
+	while (length($secret) <= $MAX_SECRET) {
+		my $got = read($fh, $secret, $MAX_SECRET + 1 - length($secret), length($secret));
+
+		# Some systems (macOS) let a directory be opened and only fail here.
+		die "Class::Shared: cannot read $path: $!\n" unless defined $got;
+		last unless $got;
+	}
 
 	close($fh) or die "Class::Shared: cannot read $path: $!\n";
 
-	$secret = '' unless defined $secret;
+	die "Class::Shared: $path is too large to be a secret (more than $MAX_SECRET bytes)\n"
+		if length($secret) > $MAX_SECRET;
+
 	$secret =~ s/\s+\z//;
 
 	die "Class::Shared: $path is empty\n" unless length $secret;

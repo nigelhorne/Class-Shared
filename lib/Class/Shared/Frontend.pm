@@ -550,6 +550,7 @@ sub _request {
 	my ($response, $error) = $self->_roundtrip($self->{sock}, $message, $wait);
 
 	if (!defined $response) {
+		$error = 'no reason was given' unless defined $error && length $error;
 		$self->shared_close;
 		$self->{last_error} = $error;
 		die "Class::Shared: lost the backend for '$self->{class}': $error\n";
