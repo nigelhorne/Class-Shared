@@ -625,6 +625,7 @@ sub _spawn_backend {
 		$self->_close($lock, $lock_path);
 		return $sock;
 	}
+	$self->_refused($lock, $lock_path, $@);
 
 	# We hold the lock, so a socket that will not answer is a leftover.
 	# Only a socket is removed as a leftover: a path that names anything else
@@ -665,6 +666,7 @@ sub _spawn_backend {
 	while (time <= $deadline) {
 		my $greeted = eval { $self->_greet };
 		if (my $handshake_error = $@) {
+			$self->_refused($lock, $lock_path, $handshake_error);
 			$handshake_error =~ s/\s+\z//;
 			$self->{last_error} = $handshake_error;
 		}
@@ -678,6 +680,22 @@ sub _spawn_backend {
 	$self->_close($lock, $lock_path);
 
 	return $sock;
+}
+
+# Purpose:       pass on a refusal that a running backend gave to the handshake.
+# Entry:         $error is what _greet died with ('' if it did not die).
+# Exit status:   returns if there is nothing to pass on; otherwise dies.
+# Side effects:  releases the start lock first.
+# Why:           a backend that answers "cannot load CLASS" is alive and has
+#                given its final answer.  Retrying until the timeout wastes
+#                the time, and replacing its socket would be wrong.
+sub _refused {
+	my ($self, $lock, $lock_path, $error) = @_;
+
+	return unless defined $error && $error =~ /\AClass::Shared: /;
+
+	$self->_close($lock, $lock_path);
+	die $error;
 }
 
 # Runs in the freshly forked child; never returns.  There is nobody to report

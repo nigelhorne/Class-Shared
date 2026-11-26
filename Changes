@@ -2,6 +2,15 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - t/integration.t: end-to-end tests with real backends (shared use by
+          several frontends, two classes in one backend, the command line, a
+          killed backend, bad or silent fake backends, unusable directories,
+          IO::Socket::SSL missing, and TCP with TLS).  It found that when a
+          backend refused the handshake while the frontend was starting one
+          (for example "cannot load CLASS"), the frontend retried until its
+          timeout and then reported "could not start a backend: ...".  The
+          refusal is now thrown at once, as the POD lists it, and the start
+          lock is released.
         - t/unit.t: black-box tests of every documented function, message and
           return state, with a ledger that fails if a documented state was not
           triggered.  It found that the Protocol functions (encode_frame,

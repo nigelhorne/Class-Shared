@@ -2405,13 +2405,17 @@ subtest 'Class::Shared::Frontend::_spawn_backend' => sub {
 	# The child that only forks the daemon is collected, not left a zombie.
 	is(waitpid(-1, 1), -1, 'no child process is left over');
 
-	# A handshake that is refused while waiting does not escape; it is recorded.
+	# A handshake that a running backend refuses is its final answer: it is thrown
+	# as it is (the POD lists "cannot load CLASS" as a message of its own), and the
+	# start lock is released so that the next client is not kept waiting.
 	mock('Class::Shared::Frontend::_greet' => sub { my $self = shift; die "Class::Shared: version mismatch\n" if $self->{polled}++; undef });
 	mock('Class::Shared::Frontend::_exec_backend' => sub { POSIX::_exit(0) });
 	my $refused = bare_frontend(socket_path => $socket_path, timeout => 0, log => "$socket_path.log");
-	is($refused->_spawn_backend, undef, 'a refusal while waiting gives undef');
-	is($refused->{last_error}, 'Class::Shared: version mismatch', 'with the refusal recorded, trimmed');
+	throws_ok { $refused->_spawn_backend } qr/\AClass::Shared: version mismatch\n\z/, 'a refusal while waiting is thrown as it is';
 	restore_all();
+	my $probe_lock;
+	ok(open($probe_lock, '>>', "$socket_path.spawn") && flock($probe_lock, Fcntl::LOCK_EX() | Fcntl::LOCK_NB()), 'and the start lock was released');
+	close($probe_lock) if $probe_lock;
 
 	# A stale socket that cannot be removed: the directory is read-only.
 	SKIP: {
