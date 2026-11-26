@@ -45,6 +45,7 @@ t/certs/other-server.pem
 t/certs/server-key.pem
 t/certs/server.pem
 t/data-flow.t
+t/domain.t
 t/edge_cases.t
 t/function.t
 t/integration.t

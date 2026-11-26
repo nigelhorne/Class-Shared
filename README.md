@@ -192,6 +192,8 @@ So `Class::Simple` and `My_Class2` are valid, and `2Bad`, `Foo::` and
 
 **Dies** with `Class::Shared: no class name given` if `$class` is undef or
 empty, and with `Class::Shared: 'NAME' is not a valid class name` otherwise.
+The domains and boundaries these two messages divide are listed under
+**API SPECIFICATION** below, and `t/domain.t` tests every one of them.
 
 #### Api Specification
 
@@ -207,6 +209,34 @@ empty, and with `Class::Shared: 'NAME' is not a valid class name` otherwise.
         matches  => qr/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/,
     },
 }
+```
+
+##### Domains
+
+```perl
+valid    one or more ASCII words, each starting with a letter or "_" and
+         continuing with letters, digits or "_", joined by "::"
+invalid  undef, the empty string, a leading digit in any word, an empty
+         word, any other separator, any non-ASCII character
+
+partition                representative           result
+-------------------------------------------------------------
+one word                 Foo                      accepted
+several words            Foo::Bar::Baz            accepted
+digits and underscores   My_Class2, A::_2         accepted
+length 1                 A, _                     accepted
+empty string             ""                       dies: no class name
+leading digit            2Foo                     dies
+empty word               Foo::, ::Foo, A:::B      dies
+hyphen, space or dot     Foo-Bar, Foo Bar         dies
+non-ASCII letter         "M" + U+00FC + "ller"    dies
+emoji, RTL override      U+1F600, U+202E          dies
+
+Boundary values: length 0 dies, length 1 is the smallest accepted.  There
+is no maximum: a 40,000 character name is accepted, because the check does
+not repeat a group (perl 5.26 stops a repeated group at 32,766 repeats).
+Only the pattern in this specification can match, so the answer is
+untainted and safe to use as a module name.
 ```
 
 ##### Output
@@ -242,6 +272,31 @@ if the secret is empty after the end of it has been trimmed.
 {
     path => { type => 'string', position => 0, optional => 0, min => 1 },
 }
+```
+
+##### Domains
+
+```
+valid    a path to a readable file whose content, after trailing white
+         space is removed, is 1 to 65536 bytes
+invalid  undef, the empty path, an unreadable path, a directory, a file
+         larger than 65536 bytes, and a file that is empty after trimming
+
+partition            representative        result
+-----------------------------------------------------------
+1 byte               "a"                   accepted
+trailing white space "secret \r\n"         trimmed
+leading white space  "  secret"            kept
+white space only     "\n\t "               dies: is empty
+0 bytes              ""                    dies: is empty
+65536 bytes          "a" x 65536           accepted
+65537 bytes          "a" x 65537           dies: too large
+
+Boundary values: 0 bytes dies, 1 byte is the smallest accepted, 65536
+bytes is the largest accepted, 65537 dies.  The size is counted in bytes,
+so the limit is the same for a UTF-8 or a binary secret.  The content is
+returned as bytes, unchanged and not decoded, so an embedded NUL and a
+multibyte character cost exactly what they occupy in the file.
 ```
 
 ##### Output
@@ -284,6 +339,33 @@ after the equals sign.
         matches  => qr/\A(?:sha256\$)?(?:(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{64})\z/,
     },
 }
+```
+
+##### Domains
+
+```
+valid    exactly 64 hexadecimal digits, or 32 pairs of two hexadecimal
+         digits separated by ":", with or without a lower case "sha256$"
+         prefix
+invalid  any other length, any other separator, an upper case prefix, and
+         any character that is not a hexadecimal digit
+
+partition             representative         result
+----------------------------------------------------------
+64 digits             0102...1f20             accepted
+32 colon-separated    01:02:...:1f:20          accepted
+sha256$ prefix        sha256$0102...           accepted
+upper case digits     0102...1F20             accepted, lower cased
+upper case prefix     SHA256$0102...           dies
+63 or 65 digits       one short, one long      dies
+31 or 33 pairs        one short, one long      dies
+spaces or hyphens     01 02 03..., 01-02-03    dies
+non-ASCII character   U+00FC, U+1F600, U+202E  dies
+
+Boundary values: the plain form is valid at exactly 64 characters (63 and
+65 die); the colon form is valid at exactly 95 (94 and 96 die).  The
+prefix is removed and every digit is lower cased; all invalid values are
+echoed in the message byte for byte, without being decoded.
 ```
 
 ##### Output
@@ -335,6 +417,27 @@ gave only one of `ca` and `fingerprint`.  The caller does that.
 }
 ```
 
+##### Domains
+
+```perl
+valid    cert and key, then either ca or fingerprint (or neither, which
+         the caller is expected to have refused already)
+invalid  nothing is refused here: this function checks neither that the
+         files exist nor that ca and fingerprint are not both given
+
+partition            representative                  result
+---------------------------------------------------------------
+ca given             ca => "ca.pem"                  SSL_ca_file
+fingerprint given    sha256$ + 64 lower hex digits   pin, no CA
+both given           ca and fingerprint              the pin wins
+neither given        cert and key only               SSL_ca_file undef
+multibyte path       /etc/U+00FC/client.pem          passed through
+
+Output boundaries: the flat list has five pairs with a CA and seven with a
+pin, so ten and fourteen elements.  SSL_verify_mode is "verify the peer"
+in every partition, and SSL_version is the same for both ends.
+```
+
 ##### Output
 
 ```perl
@@ -364,6 +467,23 @@ directory).  A file directly in the top directory, such as `/x.sock`, gives `/`.
 
 ```perl
 { path => { type => 'string', position => 0, optional => 0 } }
+```
+
+##### Domains
+
+```
+partition            representative    result
+-------------------------------------------------
+bare file name       x.sock            .
+file in the root     /x.sock           /
+nested file          /a/b/c            /a/b
+trailing slash       a/b/              a
+doubled separator    a//b              a
+empty path           ""                .
+
+The answer is never empty, so it can always be used: a path with no
+directory part gives ".".  There is no length boundary.  A multibyte
+directory part is returned unchanged, with no encoding or decoding.
 ```
 
 ##### Output
@@ -410,6 +530,26 @@ early in a system call and so name a different place.  Under taint mode
 { dir => { type => 'string', optional => 1, min => 1 } }
 ```
 
+##### Domains
+
+```
+The first partition that applies wins, so they are ordered:
+
+rank  partition                             result
+-----------------------------------------------------------------
+1     dir given and not empty               the dir, unchanged
+2     CLASS_SHARED_DIR set and not empty    that value
+3     XDG_RUNTIME_DIR names a directory     that directory/class-shared
+4     /run/user/UID exists                  that directory/class-shared
+5     none of the above                     tmpdir/class-shared-UID
+
+invalid: a name containing a NUL byte dies at any rank, because a system
+call would end the name there and so name a different place.  The empty
+string is not invalid: it means "not given" and falls through to the next
+rank.  A multibyte name is returned unchanged, not encoded.  Nothing is
+created, so a rank may name a directory that does not exist yet.
+```
+
 ##### Output
 
 ```perl
@@ -446,6 +586,35 @@ without unix sockets.
 
 ```perl
 { dir => { type => 'string', position => 0, optional => 0, min => 1 } }
+```
+
+##### Domains
+
+```
+valid    a path whose last part exists, or can be created, as a directory
+         owned by this user with neither the group write bit (0020) nor
+         the other write bit (0002) set
+invalid  undef, the empty path, a path whose parent is missing, a path
+         that is not a directory, a directory owned by another user, and
+         a directory with either write bit set
+
+partition              representative    result
+-----------------------------------------------------
+does not exist         tmp/fresh         (1, undef), mode 0700
+exists, mode 0700      tmp/private       (1, undef)
+exists, mode 0755      tmp/open          (1, undef)
+exists, mode 0777      tmp/writable      (0, reason)
+exists, mode 0770      group writable    (0, reason)
+exists, mode 0702      other writable    (0, reason)
+parent missing         tmp/absent/child  (0, "cannot create ...")
+a plain file           tmp/file          (0, "cannot create ...")
+empty or undef         ""                dies
+
+Boundary values: the boundary is the write mask 0022, not a single mode:
+0700 is the most private mode created and 0777 the most open refused, but
+0755 is accepted because others may read and search, not write.  Only the
+last part of the path is created, so a missing parent is a refusal, not a
+recursive mkdir.  A multibyte name is created as given.
 ```
 
 ##### Output
@@ -487,6 +656,27 @@ characters (see ["check\_socket\_path"](#check_socket_path)).
 { dir => { type => 'string', position => 0, optional => 1, min => 1 } }
 ```
 
+##### Domains
+
+```
+valid    no argument, or a directory name, such that the socket path is
+         1 to 100 characters
+invalid  a directory name that makes the path longer than 100 characters,
+         which dies with the message documented under L</check_socket_path>
+
+partition                     representative      result
+------------------------------------------------------------------
+default directory             ()                  .../class-shared.sock
+a directory                   /tmp                /tmp/class-shared.sock
+path exactly 100 characters   dir of 82 chars     accepted
+path 101 characters           dir of 83 chars     dies
+
+The file name is always "class-shared.sock", so the boundary is reached
+through the directory: with a 17 character file name the largest usable
+directory is 82 characters.  Nothing is created and nothing is checked for
+existence.
+```
+
 ##### Output
 
 ```perl
@@ -499,8 +689,8 @@ characters (see ["check\_socket\_path"](#check_socket_path)).
 my $path = Class::Shared::check_socket_path($path);
 ```
 
-Returns `$path` if it is short enough to be a socket address, and dies if it is
-not.  The limit is 100 characters, which is less than the operating system's
+Returns `$path` if it is short enough to be a socket address, and dies if it
+is not, or if no path is given at all.  The limit is 100 characters, which is less than the operating system's
 limit so that the code stays portable.  Without this check the system would cut
 a long path short without saying so, and a client and a backend could end up
 using two different sockets.
@@ -516,6 +706,27 @@ you give yourself, as well as for the path that `socket_path` builds.
 
 ```perl
 { path => { type => 'string', position => 0, optional => 0, min => 1 } }
+```
+
+##### Domains
+
+```
+valid    a non-empty path of 1 to 100 characters
+invalid  undef, the empty path, and any path longer than 100 characters
+
+partition          representative   result
+-------------------------------------------------
+length 1           /                accepted
+length 99          ...              accepted
+length 100         ...              accepted, the maximum
+length 101         ...              dies
+length 0 or undef  ""               dies
+
+Boundary values: 100 is accepted and 101 dies; 0 and undef die.  The limit
+is 100 characters, not bytes, and is deliberately below the operating
+system's so that a path is never silently truncated into a socket that a
+backend is not listening on.  A multibyte path is counted in characters
+and returned unchanged.
 ```
 
 ##### Output
@@ -542,6 +753,15 @@ them spins the processor and all of them wake at the same rate.
 
 ```
 { }
+```
+
+##### Domains
+
+```
+Takes no input, so it has one partition.  The output is the empty list
+(undef in scalar context).  The only observable effect is a sleep of
+C<$Class::Shared::POLL_INTERVAL> seconds, 0.02, which is the same for
+every loop that waits for a socket or a lock.
 ```
 
 ##### Output
@@ -574,6 +794,26 @@ not call it in a program that still needs them.
 
 ```perl
 { log => { type => 'string', position => 0, optional => 0, min => 1 } }
+```
+
+##### Domains
+
+```
+valid    any log path: one that can be opened for appending, and one that
+         cannot (the streams then go to the null device and the call still
+         succeeds, because a backend that cannot log should still run)
+invalid  none by value: an unopenable path is a documented fallback, not
+         an error
+
+partition            representative        result
+---------------------------------------------------------
+writable log         /tmp/backend.log      (1, undef), file created
+log in a missing dir /absent/backend.log    (1, undef), null device
+
+The refusal path, C<(0, $why)>, exists for a failure to reopen a stream
+after the log was opened, such as a descriptor limit; it cannot be
+provoked by the value of the path alone.  The call replaces STDIN, STDOUT
+and STDERR of the current process, so a test makes it in a child.
 ```
 
 ##### Output

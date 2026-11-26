@@ -411,6 +411,29 @@ time.
         secret  => { type => 'string',  position => 1, optional => 1 },
     }
 
+=head4 Domains
+
+    valid    a reference that L<Storable> can freeze, and an optional secret
+             of any length (defined means authentication is on, and that
+             includes the empty string)
+    invalid  a non-reference, a reference holding code or a filehandle, data
+             nested deeper than 10000 where Storable has no recursion limit,
+             and a body larger than MAX_FRAME (67,108,864 bytes)
+
+    partition              representative        result
+    ----------------------------------------------------------
+    small hash             { op => "ping" }      framed bytes
+    full Unicode text      U+00FC, U+1F600        framed, as bytes
+    code reference         { cb => sub {} }      (undef, cannot serialise)
+    plain string           "text"                (undef, cannot serialise)
+    undef                  undef                 (undef, cannot serialise)
+    body at MAX_FRAME      exactly the limit     accepted
+    body at MAX_FRAME + 1  one byte more         (undef, too large)
+
+    With a secret the frame is 32 bytes longer, the digest being in front of
+    the body; the limit applies to the body.  A message of 64 MiB is the
+    largest that can be sent, and the error names the size and the limit.
+
 =head4 Output
 
     {
@@ -436,6 +459,24 @@ B<Side effects:> none.
 =head4 Input
 
     { body => { type => 'string', position => 0, optional => 0 } }
+
+=head4 Domains
+
+    valid    the body of a frame: a Storable image of any reference
+    invalid  the empty string, a truncated image, and anything that is not a
+             Storable image
+
+    partition          representative          result
+    ------------------------------------------------------
+    a whole image      from encode_frame       (message, undef)
+    one byte missing   image minus its last    (undef, incomplete)
+    empty body         ""                      (undef, cannot deserialise)
+    text               "not an image"          (undef, cannot deserialise)
+
+    A truncated image is refused with "the image is incomplete" rather than
+    being returned as an undef message.  This function does no
+    authentication: use L</take_frame> or L</read_frame> for bytes from a
+    network.
 
 =head4 Output
 
@@ -471,6 +512,22 @@ B<Side effects:> writes to the handle.
         filehandle => { type => 'object', position => 0, optional => 0, can => 'syswrite' },
         bytes      => { type => 'string', position => 1, optional => 0 },
     }
+
+=head4 Domains
+
+    valid    any handle that can be written to, and bytes of length 0 or more
+    invalid  a handle whose peer has closed, which returns
+             C<(0, "write failed: ...")> rather than raising SIGPIPE
+
+    partition            representative   result
+    -------------------------------------------------
+    bytes of length 0    ""               (1), a write of nothing
+    a few bytes          "hello"          (1)
+    peer closed          after close      (0, "write failed: ...")
+
+    Zero bytes is the smallest accepted message and is a success, not a
+    failure: the loop has nothing to do.  The value of the bytes is not
+    inspected, so a binary frame and a multibyte string are written as given.
 
 =head4 Output
 
@@ -512,6 +569,27 @@ way through a frame, so close it.
         timeout    => { type => 'number', position => 1, optional => 1, min => 0 },
         secret     => { type => 'string', position => 2, optional => 1 },
     }
+
+=head4 Domains
+
+    valid    a handle and an optional timeout of 0 or more seconds (undef
+             waits for ever); a body of 0 to MAX_FRAME bytes, plus 32 when a
+             secret is given
+    invalid  a header above the limit, a digest that does not verify, a body
+             that is not a Storable image, a peer that closes, and a wait that
+             runs out
+
+    partition                representative        result
+    ------------------------------------------------------------
+    a whole frame            encode_frame output   (message, undef)
+    header at MAX_FRAME      no body follows       (undef, closed by peer)
+    header at MAX_FRAME + 1  any                   (undef, exceeds the limit)
+    timeout 0, no data       empty pipe            (undef, timed out)
+    peer closed              empty pipe            (undef, closed by peer)
+
+    Boundary values: a header of exactly MAX_FRAME is accepted as a length and
+    fails only when the body cannot be read; MAX_FRAME + 1 is refused before
+    any body is read.  A timeout of 0 means "do not wait" and is the minimum.
 
 =head4 Output
 
@@ -568,6 +646,28 @@ B<Side effects:> removes the bytes of one complete frame from C<$buffer>.
         buffer => { type => 'scalarref', position => 0, optional => 0 },
         secret => { type => 'string',    position => 1, optional => 1 },
     }
+
+=head4 Domains
+
+    valid    a buffer reference holding 0 or more bytes, and a length field of
+             0 to MAX_FRAME (plus 32 when a secret is given)
+    invalid  a length field above that limit, a payload shorter than the 32
+             byte digest, a digest that does not verify, and a body that is
+             not a Storable image
+
+    partition                 representative      result
+    ----------------------------------------------------------
+    buffer of 0 to 3 bytes    any               (0, need more bytes)
+    header at the limit       no body yet       (0, need more bytes)
+    header at the limit + 1   any               (-1, exceeds the limit)
+    payload under 32 bytes    with a secret     (-1, too short to authenticate)
+    wrong digest              with a secret     (-1, failed authentication)
+    a whole valid frame       encode_frame      (1, message, undef)
+
+    The status values are 1, 0 and -1 only.  A partial buffer is never
+    changed; a complete frame is cut out of the buffer before it is decoded,
+    so a frame that fails authentication is discarded rather than left to be
+    tried again.
 
 =head4 Output
 

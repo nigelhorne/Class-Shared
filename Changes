@@ -21,6 +21,12 @@ Revision history for Class-Shared
           named "0" is used; a TCP frontend no longer needs a unix directory.
         - Frontend new() now dies if given both token and token_file.
         - New t/data-flow.t.
+        - New t/domain.t: equivalence partitioning and boundary value analysis
+          for every public parameter, and the domains it tests are now listed
+          in each function's API SPECIFICATION.
+        - check_socket_path refuses an empty path with "no socket path given"
+          instead of returning it, and Frontend new() checks that a port is a
+          whole number from 1 to 65535, both as already documented.
         - First release.
         - The remaining denial-of-service risks.  The log is copied to LOG.1 and
           emptied at max_log_size (10 MiB).  A connection that sends no accepted

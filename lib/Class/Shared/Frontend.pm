@@ -97,6 +97,13 @@ sub new {
 	if ($transport eq 'tcp') {
 		die "Class::Shared::Frontend->new: a TCP backend needs both host and port\n"
 			unless defined $opt{host} && defined $opt{port};
+
+		# A port is a whole number in the range the network stack accepts.
+		# Checked before anything is read or connected, so a typo is reported
+		# as a typo rather than as a failure to reach the backend.
+		if ($opt{port} !~ /\A[0-9]+\z/ || $opt{port} < 1 || $opt{port} > 65535) {
+			die "Class::Shared::Frontend->new: port must be a whole number from 1 to 65535\n";
+		}
 		die "Class::Shared::Frontend->new: use either socket or host/port, not both\n"
 			if defined $opt{socket};
 
@@ -1063,6 +1070,39 @@ C<class-shared status> and C<class-shared stop>.
         tls_ca          => { type => 'string',   optional => 1, min => 1 },
         tls_fingerprint => { type => 'string',   optional => 1 },
     }
+
+=head4 Domains
+
+    The options are checked before a connection is made, so every partition
+    below is refused without contacting a backend.
+
+    partition                        representative              result
+    -------------------------------------------------------------------------
+    unknown option                    bogus => 1                  dies
+    odd number of arguments           "odd"                       dies
+    no class                          ()                          dies
+    invalid class name                2Bad, Foo::, M + U+00FC     dies
+    ctor not an array reference       ctor => "x"                 dies
+    unix socket with a token          token => "s"                dies
+    unix socket with TLS              tls_ca => "ca.pem"          dies
+    token and token file together     token, token_file           dies
+    host without port                 host => "h"                 dies
+    port without host                 port => 1                   dies
+    socket with host and port         socket, host, port          dies
+    TCP without certificate or key    host, port                  dies
+    TCP with both a CA and a pin      tls_ca, tls_fingerprint     dies
+
+    Port boundary values, with a host present: 1 and 65535 are accepted and
+    validation passes to the next option; 0, 65536, -1, "", "80x", " 80" and
+    "80.0" die.  A port is a whole number, so "0080" is accepted as 80.  A
+    missing host or port is reported before the port is range checked.  The
+    class name follows L<Class::Shared/validate_class>, and ctor must be an
+    array reference.
+
+    A valid unix frontend needs only a class name; a valid TCP frontend needs
+    host, port, tls_cert, tls_key and exactly one of tls_ca and
+    tls_fingerprint.  Those partitions connect, so they are covered by
+    F<t/02-frontend.t>; the refusals above are covered by F<t/domain.t>.
 
 =head4 Output
 
