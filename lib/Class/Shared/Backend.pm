@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use Carp ();
-use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_CREAT);
+use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_WRONLY O_CREAT O_EXCL);
 use File::Spec ();
 use IO::Socket::INET;
 use IO::Socket::UNIX;
@@ -75,6 +75,14 @@ our $THAW_UNCHECKED = 4096;
 # The most seconds that trial may take.
 our $THAW_TRIAL_TIMEOUT = 30;
 
+# The log is copied to LOG.1 and emptied when it passes this many bytes, so the
+# two together are bounded however much a client makes the backend say.
+our $MAX_LOG_SIZE = 10 * 1024 * 1024;
+
+# How long a greeted client may send nothing at all.  0, the default, is for
+# ever: a client that holds an object and uses it rarely is the normal case.
+our $IDLE_TIMEOUT = 0;
+
 # How long, in seconds, the listener is left alone after accept() failed for
 # want of file descriptors or memory.
 our $ACCEPT_PAUSE = 0.1;
@@ -114,6 +122,8 @@ my %OPTION_SCHEMA = (
 	call_timeout      => { type => 'number',  optional => 1, min => 0 },
 	read_timeout      => { type => 'number',  optional => 1, min => 0 },
 	max_buffered_total => { type => 'integer', optional => 1, min => 1 },
+	idle_timeout      => { type => 'number',  optional => 1, min => 0 },
+	max_log_size      => { type => 'integer', optional => 1, min => 0 },
 
 	# Not options of the backend: they say where to look for site settings.
 	config_file       => { type => 'string',   optional => 1, min => 1 },
@@ -218,6 +228,8 @@ sub new {
 		call_timeout      => $CALL_TIMEOUT,
 		read_timeout      => $READ_TIMEOUT,
 		max_buffered_total => $MAX_BUFFERED_TOTAL,
+		idle_timeout      => $IDLE_TIMEOUT,
+		max_log_size      => $MAX_LOG_SIZE,
 		daemonize         => 0,
 		log               => $control . '.log',
 		%opt,
@@ -254,6 +266,8 @@ sub new {
 		call_timeout      => $set{call_timeout},
 		read_timeout      => $set{read_timeout},
 		max_buffered_total => $set{max_buffered_total},
+		idle_timeout      => $set{idle_timeout},
+		max_log_size      => $set{max_log_size},
 		objects       => {},
 		clients       => {},
 		queued        => 0,
@@ -629,8 +643,8 @@ sub _loop {
 		my $timeout = $handshaking ? $HANDSHAKE_POLL : undef;
 		my $read_deadline;
 		for my $client (values %{$self->{clients}}) {
-			next unless defined $client->{partial_progress};
-			my $deadline = $client->{partial_progress} + $self->{read_timeout};
+			my ($deadline) = $self->_read_deadline($client);
+			next unless defined $deadline;
 			$read_deadline = $deadline
 				if !defined $read_deadline || $deadline < $read_deadline;
 		}
@@ -756,9 +770,37 @@ sub _account_inbound {
 	return 1;
 }
 
-# Drop connections whose half-sent request has stopped arriving.  One that has
-# bytes waiting to be read ($readable) is left alone: the backend may only just
-# have come back from a long call, and those bytes are its progress.
+# Purpose:       say by when a client must send something, and why.
+# Entry:         $client is a client record.
+# Exit status:   (time, reason for dropping it), or () for no limit.
+# Side effects:  none.
+sub _read_deadline {
+	my ($self, $client) = @_;
+
+	# A TLS handshake has its own deadline.
+	return () if $client->{handshaking};
+
+	return ($client->{partial_progress} + $self->{read_timeout},
+		'a request of which ' . length($client->{buffer})
+		. " bytes had arrived made no progress for $self->{read_timeout} second(s)")
+		if defined $client->{partial_progress};
+
+	return ($client->{greet_by},
+		"no accepted hello within $self->{handshake_timeout} second(s)")
+		if !$client->{greeted} && defined $client->{greet_by};
+
+	# A reply still being written is write_timeout's business.
+	return ($client->{last_request} + $self->{idle_timeout},
+		"sent nothing for $self->{idle_timeout} second(s)")
+		if $self->{idle_timeout} && defined $client->{last_request}
+			&& !length $client->{outbuf};
+
+	return ();
+}
+
+# Drop connections that have not sent what they should have in time.  One that
+# has bytes waiting to be read ($readable) is left alone: the backend may only
+# just have come back from a long call, and those bytes are its progress.
 sub _expire_reads {
 	my ($self, $readable) = @_;
 
@@ -766,13 +808,53 @@ sub _expire_reads {
 
 	for my $client (values %{$self->{clients}}) {
 		next if $client->{closed};
-		next unless defined $client->{partial_progress};
-		next if $client->{partial_progress} + $self->{read_timeout} > $now;
+		my ($deadline, $reason) = $self->_read_deadline($client);
+		next unless defined $deadline;
+		next if $deadline > $now;
 		next if length $readable && vec($readable, fileno($client->{fh}), 1);
 
-		$self->_drop_client($client, 'a request of which ' . length($client->{buffer})
-			. " bytes had arrived made no progress for $self->{read_timeout} second(s)");
+		$self->_drop_client($client, $reason);
 	}
+
+	return 1;
+}
+
+# Purpose:       keep the log from filling the disk.
+# Entry:         max_log_size is a number of bytes, 0 for no limit.
+# Exit status:   1.
+# Side effects:  copies a log over the limit to LOG.1 (replacing it) and
+#                empties the log.
+# Why:           copied and emptied, not renamed: standard output and error of
+#                the backend, which the target writes to, hold the file open, and
+#                after a rename they would go on filling a file nobody can see.
+#                A log that is a symbolic link or a device is left to whoever
+#                made it so.
+sub _trim_log {
+	my $self = shift;
+
+	my $limit = $self->{max_log_size};
+	return 1 unless $limit && defined $self->{log};
+
+	my $path = File::Spec->rel2abs($self->{log});
+	return 1 unless lstat($path) && -f _ && -s _ > $limit;
+
+	local ($!, $@);
+	my $old = "$path.1";
+
+	# Made anew, owner only, so that nothing already there is written through.
+	unlink($old);
+	if (sysopen(my $to, $old, O_WRONLY | O_CREAT | O_EXCL, 0600)) {
+		if (open(my $from, '<', $path)) {
+			while (sysread($from, my $chunk, $READ_CHUNK)) {
+				last unless syswrite($to, $chunk);
+			}
+			close($from);
+		}
+		close($to);
+	}
+
+	# Emptied even if the copy failed: bounding the disk is the point.
+	truncate($path, 0);
 
 	return 1;
 }
@@ -846,6 +928,7 @@ sub _accept {
 		serial  => $self->{next_serial}++,
 		objects => {},
 		closed  => 0,
+		greet_by => Time::HiRes::time() + $self->{handshake_timeout},
 	};
 
 	if (defined $self->{host}) {
@@ -895,6 +978,8 @@ sub _continue_tls {
 		$client->{handshaking} = 0;
 		$client->{want_write}  = 0;
 		delete $client->{deadline};
+		# The time to say hello starts once there is a channel to say it on.
+		$client->{greet_by} = Time::HiRes::time() + $self->{handshake_timeout};
 
 		# The socket stays non-blocking: a frame, or the TLS record carrying
 		# it, that arrives in pieces waits in this client's buffer while the
@@ -1008,7 +1093,9 @@ sub _serve_client {
 		last if $self->{stop};
 	}
 
+	$client->{last_request} = Time::HiRes::time() if $completed;
 	$self->_account_inbound($client, $completed) unless $client->{closed};
+	$self->_trim_log;
 
 	return 1;
 }
@@ -1608,6 +1695,8 @@ sub _log {
 
 	$level = 'info' unless defined $level;
 
+	$self->_trim_log;
+
 	# Some of what is logged is text a client chose (the reason a call died, a
 	# name it asked for).  An escape character in it would act on the terminal
 	# of whoever reads the log, so each run of control characters becomes one
@@ -1844,8 +1933,23 @@ Default 2.
 =item handshake_timeout
 
 Seconds a TCP connection may spend on its TLS handshake before it is dropped
-and its slot freed.  Default 5.  Nothing else is bounded by it: a client that
-has finished its handshake may sit idle for as long as it likes.
+and its slot freed, and then seconds any new connection may take to send a
+hello that is accepted.  Default 5.  So a connection that says nothing cannot
+hold one of the C<max_clients> places.
+
+=item idle_timeout
+
+Seconds a client that has said hello may send nothing before it is dropped, and
+its objects with it.  Default 0, which means for ever, because a program that
+uses its object rarely is normal.  Set it if programs you do not trust to leave
+can connect: without it they can occupy all C<max_clients> places.
+
+=item max_log_size
+
+When the log grows past this many bytes it is copied to F<LOG.1>, replacing any
+earlier one, and emptied.  Default 10485760 (10 MiB); 0 means never.  A log that
+is a symbolic link or not a plain file is left alone.  The size is looked at
+when the backend logs a line or has served a request.
 
 =item call_timeout
 
@@ -1969,6 +2073,8 @@ variable such as C<$Class::Shared::Backend::WRITE_TIMEOUT> before it does.
         call_timeout      => { type => 'number',  optional => 1, min => 0 },
         read_timeout      => { type => 'number',  optional => 1, min => 0 },
         max_buffered_total => { type => 'integer', optional => 1, min => 1 },
+        idle_timeout      => { type => 'number',  optional => 1, min => 0 },
+        max_log_size      => { type => 'integer', optional => 1, min => 0 },
         config_file       => { type => 'string',   optional => 1, min => 1 },
         config_dirs       => { type => 'arrayref', optional => 1 },
     }
@@ -2797,10 +2903,10 @@ After C<kill -9> the socket file and the pid file stay.  The next backend starts
 normally: it finds that nothing answers on the socket and removes it.  The lock
 file (C<.owner>) and the log are never removed.
 
-=item The log is never trimmed.
+=item Old log lines are thrown away.
 
-It only grows.  Rotate it yourself (stop the backend, move the file, start it
-again), or give C<log> a path that something else rotates.
+It keeps only one earlier copy: see C<max_log_size>.  To keep more, give C<log>
+a symbolic link to a file that something else rotates.
 
 =item The limits drop clients, not requests.
 

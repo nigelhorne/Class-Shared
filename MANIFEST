@@ -53,5 +53,6 @@ t/lib/Shared/Command.pm
 t/lib/Shared/Conjunction.pm
 t/lib/Shared/Counter.pm
 t/lib/Shared/Page.pm
+t/lib/Shared/Reaper.pm
 t/lib/Shared/Tally.pm
 t/pod-synopsis.t

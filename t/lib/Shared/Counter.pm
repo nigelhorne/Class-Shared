@@ -34,6 +34,16 @@ sub sleepy {
 	return $seconds;
 }
 
+# Returns data nested $depth deep, which cannot safely cross the wire.
+sub nest {
+	my ($self, $depth) = @_;
+
+	my $data = [];
+	$data = [$data] for 1 .. $depth;
+
+	return $data;
+}
+
 sub inc {
 	my $self = shift;
 	$self->{value} += @_ ? shift : 1;

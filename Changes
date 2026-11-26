@@ -2,6 +2,13 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - The remaining denial-of-service risks.  The log is copied to LOG.1 and
+          emptied at max_log_size (10 MiB).  A connection that sends no accepted
+          hello within handshake_timeout is dropped; new option idle_timeout
+          (off by default) drops quiet clients too.  New command option
+          "class-shared start --max-memory MIB" caps the backend's memory.  The
+          edge case tests end their processes even if they are killed, and do
+          not rely on the memory cap where it is not enforced.
         - Crash denial of service.  A request of a few hundred kilobytes holding
           data nested 100000 deep made Storable::thaw overflow the C stack and
           killed the backend, with every shared object, on all perls.  Requests

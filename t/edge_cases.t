@@ -30,13 +30,17 @@ BEGIN {
 	# KiB of memory, seconds of processor time, 512-byte blocks per file.
 	my %cap = (memory => 1_048_576, cpu => 120, file => 204_800);
 
+	# macOS accepts ulimit -v and does not enforce it, so only systems that do
+	# are trusted with the endless-input tests.
+	my $enforced = $^O eq 'linux' || $^O eq 'freebsd';
+
 	if (!$ENV{EDGE_CASES_STARTED} && -x '/bin/sh') {
 		local $ENV{EDGE_CASES_STARTED} = 1;
 
 		# EDGE_CASES_CAPPED says the memory limit really took effect; where it
 		# cannot be set, the endless-input tests are skipped.
 		exec('/bin/sh', '-c',
-			"ulimit -v $cap{memory} 2>/dev/null && EDGE_CASES_CAPPED=1 && export EDGE_CASES_CAPPED; "
+			"ulimit -v $cap{memory} 2>/dev/null && " . ($enforced ? 'EDGE_CASES_CAPPED=1' : 'EDGE_CASES_CAPPED=') . ' && export EDGE_CASES_CAPPED; '
 			. "ulimit -t $cap{cpu} 2>/dev/null; ulimit -f $cap{file} 2>/dev/null; "
 			. 'exec "$0" "$@"',
 			$^X, (map { "-I$_" } grep { !ref } @INC), $0, @ARGV);
@@ -72,6 +76,7 @@ use lib 'lib', 't/lib';
 use Class::Shared::Backend ();
 use Class::Shared::Frontend ();
 use Class::Shared::Protocol ();
+use Shared::Reaper ();
 
 my %config = (
 	class        => 'Shared::Counter',
@@ -143,6 +148,7 @@ sub outcome {
 # A real backend in a child, with the options given.  $setup runs in the child
 # first, to change package limits there only.
 my @backends;
+my $reaper = Shared::Reaper->new(File::Spec->catfile(private_dir(), 'pids'));
 sub start_backend {
 	my (%option) = @_;
 	my $setup = delete $option{setup};
@@ -157,7 +163,7 @@ sub start_backend {
 		eval { Class::Shared::Backend->new(socket => $b->{socket}, log => $b->{log}, %option)->run };
 		POSIX::_exit(0);
 	}
-	$b->{pid} = $pid;
+	$b->{pid} = $reaper->add($pid);
 	push @backends, $b;
 
 	my $until = time + $config{start_wait};
@@ -181,6 +187,7 @@ END {
 			kill 'KILL', $b->{pid};
 			waitpid($b->{pid}, 0);
 		}
+		$reaper->dismiss if $reaper;
 	}
 }
 
@@ -615,7 +622,7 @@ subtest 'the frontend refuses hostile options and arguments' => sub {
 	my $evil = File::Spec->catdir(private_dir(), q{a b;touch PWNED3 $(id)});
 	mkdir $evil, 0700 or die "mkdir: $!";
 	my $frontend = Class::Shared::Frontend->new($config{class}, dir => $evil, ctor => [start => 1]);
-	my $started_pid = $frontend->shared_pid;
+	my $started_pid = $reaper->add($frontend->shared_pid);
 	my $guard = Unit::KillOnExit->new($started_pid);
 	is($frontend->inc, 2, 'a backend starts in a directory with hostile characters in its name');
 	ok(!-e 'PWNED3' && !-e File::Spec->catfile($evil, 'PWNED3'), 'and no command in the name was run');
@@ -854,14 +861,151 @@ subtest 'a deeply nested request cannot crash the backend' => sub {
 	my $hostile = greeted($b);
 	Class::Shared::Protocol::write_all($hostile, pack('N', length $image) . $image);
 	my ($reply) = Class::Shared::Protocol::read_frame($hostile, $config{quick} * 4);
-	is_deeply([@{ $reply || {} }{qw(ok kind error)}], [0, 'protocol', 'cannot deserialise message: reading it would crash the process'], 'the request is refused with an explanation');
+	# How deep is too deep depends on the stack the machine gives.  Where this
+	# depth would crash, the frame is refused unread; where it can be read (macOS)
+	# it is read, and then refused for not being a request.  Either is safe.
+	is_deeply([@{ $reply || {} }{qw(ok kind)}], [0, 'protocol'], 'the request is refused');
+	like($reply->{error} // '', qr/\A(?:cannot deserialise message: reading it would crash the process|request is not a hash reference)\z/, '  with an explanation');
+	state_of('refused with: ' . ($reply->{error} // 'no reply'));
 
 	is(kill(0, $b->{pid}), 1, 'the backend is still running');
 	is(ask($good, { op => 'call', id => $id, method => 'value', args => [], want => 'scalar' })->{result}[0], 7, 'and the shared objects are still there');
 
+	# The refusal itself, on any machine: a reader that dies stands in for the
+	# stack overflow, so that this does not depend on how big the stack is.
+	my $unrun = Class::Shared::Backend->new(socket => File::Spec->catfile(private_dir(), 's'), log => File::Spec->catfile(private_dir(), 'l'));
+	my $long = 'x' x 10_000;
+	mock('Storable::thaw' => sub { kill 'KILL', $$ });
+	is($unrun->_survives_thaw($long), 0, 'a request whose reading kills the child is not safe');
+	restore_all();
+	mock('Storable::thaw' => sub { die "not an image\n" });
+	is($unrun->_survives_thaw($long), 1, 'an ordinary failure to read is left to the real reader');
+	restore_all();
+
 	# An ordinary large request is still served.
 	my $large = ask($good, { op => 'call', id => $id, method => 'echo_list', args => ['y' x 200_000], want => 'list' });
 	is(length $large->{result}[0], 200_000, 'an ordinary request over 4096 bytes works');
+};
+
+# Connections that say nothing must not keep the places others need, and a
+# backend told to may also drop clients that have gone quiet.
+subtest 'silent and idle clients do not keep their places' => sub {
+	my $b = start_backend(max_clients => 3, handshake_timeout => 1);
+
+	my @silent = map { connect_to($b) } 1 .. 3;
+	select(undef, undef, undef, 2);
+	ok(alive($b), 'three connections that said nothing lost their places');
+	like(slurp($b->{log}), qr/no accepted hello within 1 second/, 'and the log says why');
+
+	my $greeted = greeted($b);
+	select(undef, undef, undef, 2);
+	ok(ask($greeted, { op => 'ping' })->{ok}, 'by default a greeted client may be idle');
+
+	my $strict = start_backend(max_clients => 2, idle_timeout => 1);
+	my @quiet = map { greeted($strict) } 1 .. 2;
+	select(undef, undef, undef, 2.5);
+	ok(alive($strict), 'with idle_timeout, quiet clients are dropped');
+	like(slurp($strict->{log}), qr/sent nothing for 1 second/, 'and the log says why');
+};
+
+# A client that makes the backend log without end must not fill the disk.
+subtest 'the log cannot fill the disk' => sub {
+	my $limit = 4096;
+	my $b = start_backend(max_log_size => $limit);
+
+	local $SIG{PIPE} = 'IGNORE';
+	for (1 .. 300) {
+		# A full accept queue refuses at once on macOS, so wait and try again.
+		my $sock;
+		my $until = time + $config{quick};
+		select(undef, undef, undef, 0.01) until ($sock = connect_to($b)) || time > $until;
+		die "connect: $!" unless $sock;
+		close($sock);
+	}
+	ok(alive($b), 'the backend serves after 300 reconnections');
+
+	cmp_ok(-s $b->{log}, '<=', 2 * $limit, 'the log stays small');
+	ok(-f "$b->{log}.1", 'one earlier copy is kept');
+	cmp_ok(-s "$b->{log}.1", '<=', 2 * $limit, '  which is small too');
+	is((stat "$b->{log}.1")[2] & 077, 0, '  and readable by the owner only');
+
+	# A log that is a link is not the backend's to rewrite.
+	my $dir = private_dir();
+	my $real = write_file(File::Spec->catfile($dir, 'real'), 'x' x 100);
+	my $link = File::Spec->catfile($dir, 'link');
+	symlink($real, $link) or die;
+	Class::Shared::Backend->new(socket => File::Spec->catfile($dir, 's'), log => $link, max_log_size => 10)->_trim_log;
+	is(-s $real, 100, 'a log that is a symbolic link is left alone');
+};
+
+# A genuine backend must never send a reply that crashes the frontend: data too
+# deep to cross safely is refused where it is serialised.
+subtest 'a deeply nested result is an error, not a crash' => sub {
+	my $b = start_backend();
+	my $frontend = Class::Shared::Frontend->new($config{class}, socket => $b->{socket}, autostart => 0);
+
+	my $r = outcome(sub { $frontend->nest($config{deep}) }, 60);
+	like($r->{died}, qr/cannot serialise message/, 'the caller is told');
+	is(kill(0, $b->{pid}), 1, 'the backend is still running');
+	is($frontend->shared_status->{pid}, $b->{pid}, 'and the frontend still works');
+};
+
+# The command's memory cap ends a target that allocates without end.
+subtest 'class-shared start --max-memory' => sub {
+	plan skip_all => 'ulimit -v is not enforced here' unless $ENV{EDGE_CASES_CAPPED};
+
+	my $dir = private_dir();
+	system($^X, '-Ilib', '-It/lib', 'bin/class-shared', 'start', '--dir', $dir, '--max-memory', 200);
+	is($?, 0, 'start with a cap succeeds');
+	my $socket = File::Spec->catfile($dir, 'class-shared.sock');
+	my $until = time + $config{start_wait};
+	select(undef, undef, undef, 0.05) until -S $socket || time > $until;
+
+	my $frontend = Class::Shared::Frontend->new($config{class}, dir => $dir, autostart => 0);
+	my $pid = $reaper->add($frontend->shared_pid);
+	like(slurp("/proc/$pid/limits"), qr/Max address space\s+209715200\s/, 'the backend runs under the cap') if -r "/proc/$pid/limits";
+
+	my $r = outcome(sub { length $frontend->blob(600 * 1024 * 1024) }, 60);
+	ok($r->{died}, 'an allocation beyond the cap fails');
+	$frontend->shared_shutdown if $frontend->shared_connected;
+	kill 'TERM', $pid;
+
+	my $bad = `$^X -Ilib bin/class-shared start --dir $dir --max-memory 0 2>&1`;
+	like($bad, qr/--max-memory wants a number of MiB above 0/, 'a cap of 0 is refused');
+};
+
+# If this file is killed by one of its own limits, nothing it started survives.
+subtest 'a killed test leaves no processes behind' => sub {
+	my $list = File::Spec->catfile(private_dir(), 'pids');
+	pipe(my $from, my $to) or die;
+
+	my $victim = fork() // die;
+	if (!$victim) {
+		close($from);
+		my $own = Shared::Reaper->new($list);
+		my $child = fork() // die;
+		if (!$child) { close($to); sleep 60; POSIX::_exit(0) }
+		$own->add($child);
+		syswrite($to, "$child\n");
+		close($to);
+		select(undef, undef, undef, 1);
+		kill 'KILL', $$;
+	}
+	close($to);
+	chomp(my $child = <$from>);
+	waitpid($victim, 0);
+
+	my $until = time + $config{quick};
+	# An ended process that nothing has collected yet (as in a container with
+	# no init) still answers kill 0, so its state is looked at too.
+	my $running = sub {
+		return 0 unless kill(0, $child);
+		my ($state) = slurp("/proc/$child/stat") =~ /\)\s+(\S)/;
+		state_of("grandchild state: " . ($state // 'unknown'));
+		return !defined $state || $state ne 'Z';
+	};
+	select(undef, undef, undef, 0.05) while $running->() && time < $until;
+	ok(!$running->(), 'the grandchild of a killed process was ended');
 };
 
 # Objects and file descriptors must go when clients do.
@@ -905,7 +1049,7 @@ subtest 'file descriptor exhaustion' => sub {
 			$socket, $log);
 		POSIX::_exit(127);
 	}
-	push @backends, { pid => $pid };
+	push @backends, { pid => $reaper->add($pid) };
 	my $until = time + $config{start_wait};
 	select(undef, undef, undef, 0.05) until -S $socket || time > $until;
 	ok(-S $socket, 'a backend with a small descriptor limit is up') or return;

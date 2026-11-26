@@ -249,6 +249,7 @@ my %LEDGER = map { $_ => 1 } (
 	'protocol call: timeout',
 	'protocol call: no limit when call_timeout is 0',
 	'Backend new: read_timeout and max_buffered_total',
+	'Backend new: idle_timeout and max_log_size',
 	'Backend new: call_timeout default and range',
 	'protocol call: result list',
 	'protocol call: die',
@@ -1917,6 +1918,12 @@ subtest 'Backend protocol: call_timeout' => sub {
 	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', read_timeout => -1) } qr/an argument is not valid/, 'read_timeout may not be negative';
 	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', max_buffered_total => 0) } qr/an argument is not valid/, 'max_buffered_total must be at least 1';
 	hit('Backend new: read_timeout and max_buffered_total');
+
+	is($Class::Shared::Backend::IDLE_TIMEOUT, 0, 'idle_timeout: off by default');
+	is($Class::Shared::Backend::MAX_LOG_SIZE, 10 * 1024 * 1024, 'max_log_size: 10 MiB by default');
+	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', idle_timeout => -1) } qr/an argument is not valid/, 'idle_timeout may not be negative';
+	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', max_log_size => -1) } qr/an argument is not valid/, 'max_log_size may not be negative';
+	hit('Backend new: idle_timeout and max_log_size');
 
 	my $limit = 1;
 	my $b = start_backend(call_timeout => $limit);

@@ -27,9 +27,13 @@ my %opt = (
 	tls_fingerprint => undef,
 	log        => undef,
 	foreground => 0,
+	max_memory => undef,
 	help       => 0,
 	version    => 0,
 );
+
+# Kept for start --max-memory, which runs the command again with the same words.
+my @command_line = @ARGV;
 
 my $options_ok = GetOptions(
 	'dir=s'        => \$opt{dir},
@@ -44,6 +48,7 @@ my $options_ok = GetOptions(
 	'tls-fingerprint=s' => \$opt{tls_fingerprint},
 	'log=s'        => \$opt{log},
 	'foreground|f' => \$opt{foreground},
+	'max-memory=i' => \$opt{max_memory},
 	'help|h'       => \$opt{help},
 	'version|V'    => \$opt{version},
 );
@@ -81,6 +86,8 @@ exit 0;
 
 sub start {
 	my ($host, $port) = tcp_endpoint();
+
+	limit_memory() if defined $opt{max_memory};
 
 	eval { require Class::Shared::Backend; 1 }
 		or fatal("cannot load Class::Shared::Backend: $@");
@@ -166,6 +173,31 @@ sub show_path {
 }
 
 # ---------------------------------------------------------------- plumbing
+
+# Cap the memory of this process, and so of the backend it becomes, by running
+# the command again under the shell's ulimit.  Perl has no call of its own for
+# this, and the cap keeps a target class that allocates without end from taking
+# the machine with it.  Every word is passed as an argument, never as shell text.
+sub limit_memory {
+	my $mib = $opt{max_memory};
+	fatal("--max-memory wants a number of MiB above 0, not '$mib'") unless $mib > 0;
+
+	# The second time round the cap is in place.  The mark is removed so that
+	# nothing the backend starts believes it is capped.
+	return if delete $ENV{CLASS_SHARED_MEMORY_CAPPED};
+
+	# Elsewhere ulimit -v is accepted and ignored, which would be worse than
+	# saying so.
+	fatal("--max-memory is not enforced on this system ($^O)")
+		unless $^O eq 'linux' || $^O eq 'freebsd';
+
+	local $ENV{CLASS_SHARED_MEMORY_CAPPED} = 1;
+	exec('/bin/sh', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'sh',
+		$mib * 1024, $^X, (map { "-I$_" } grep { !ref } @INC), $0, @command_line)
+		or fatal("cannot limit memory: $!");
+
+	return;
+}
 
 # --listen tcp:HOST:PORT, or --host and --port; otherwise a unix socket.
 sub tcp_endpoint {
@@ -463,6 +495,7 @@ Options:
                    client commands only
   --log PATH       backend log file (default: SOCKET.log)
   -f, --foreground stay in the foreground (start)
+  --max-memory MIB cap the backend's memory (start; Linux and FreeBSD)
   -h, --help       this message
   -V, --version    print the version
 
@@ -656,6 +689,15 @@ with C<--tls-ca>, not pinned.
 Where the backend writes its log.  Defaults to the socket path with C<.log>
 appended.
 
+=item --max-memory MIB
+
+For C<start>, on Linux and FreeBSD: the most memory, in MiB, the backend process
+may use.  It guards the machine against a target class that allocates without
+end.  When the backend reaches the limit Perl says C<Out of memory!> and exits,
+and its objects are lost with it.  Without this option the backend has the
+limits of the shell that started it; so does a backend that a program starts for
+itself.
+
 =item -f, --foreground
 
 Stay in the foreground instead of forking into the background (C<start> only).
@@ -800,9 +842,9 @@ C<start> refuses it.  A listener checks its clients with C<--tls-ca>.
 
 Start it with the C<PERL5LIB> or C<perl -I> that your clients need.
 
-=item The log is never trimmed.
+=item Old log lines are thrown away.
 
-It only grows.
+At 10 MiB the log is copied to F<LOG.1> and emptied; only that one copy is kept.
 
 =back
 
