@@ -2,15 +2,14 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # Regression tests for the findings of the security audit.  Each one is named
 # for the attack it stops, and each is run against the attack itself, so that
 # a change that lets it through again fails here.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
 		. 'which this perl cannot provide (Class::Shared is Unix-only)'
@@ -278,15 +277,15 @@ PROGRAM
 
 # ---------------------------------------------------- TLS versions (audit 4)
 
-SKIP: {
-	skip 'IO::Socket::SSL is not installed', 3 unless eval { require IO::Socket::SSL; 1 };
+subtest 'with IO::Socket::SSL' => sub {
+	test_needs 'IO::Socket::SSL';
 
 	my %options = Class::Shared::client_tls_options(cert => 'c', key => 'k', ca => 'a');
 
 	is($options{SSL_version}, $Class::Shared::TLS_VERSIONS, 'the client asks for the permitted TLS versions');
 	unlike($options{SSL_version}, qr/(?<![!\w])TLSv1(?:_1)?(?!\w)/, '  none of which is TLS 1.0 or 1.1');
 	like($options{SSL_version}, qr/!SSLv3.*!TLSv1:!TLSv1_1/, '  and the old ones are switched off by name');
-}
+};
 
 # ----------------------------------------------------- the log (audit 6)
 

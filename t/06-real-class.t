@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # The frontend reaches its backend over a unix socket in an owner-only
@@ -15,9 +16,7 @@ use Class::Shared ();
 # directory here can really be made owner-only is asked of Test::Permissions,
 # which tries chmod rather than guessing from the platform's name.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend here is reached over a unix socket in an '
 		. 'owner-only directory, which this perl cannot provide '
@@ -25,8 +24,7 @@ BEGIN {
 		unless Class::Shared::_has_unix_sockets()
 			&& Test::Permissions::can_revoke_create();
 
-	eval { require Lingua::Conjunction; 1 }
-		or plan skip_all => 'Lingua::Conjunction is not installed';
+	test_needs 'Lingua::Conjunction';
 }
 
 use File::Temp qw(tempdir);

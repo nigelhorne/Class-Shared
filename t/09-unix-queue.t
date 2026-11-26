@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # t/04 covers the reply queue over TLS.  The unix socket takes a different path
@@ -26,9 +27,7 @@ use Class::Shared ();
 # Whether this perl can make that socket is asked of the module, and whether a
 # directory here can really be made owner-only is asked of Test::Permissions.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'this exercises the reply queue over a unix socket in an '
 		. 'owner-only directory, which this perl cannot provide '

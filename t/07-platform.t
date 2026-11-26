@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 
 use Class::Shared ();
 use File::Temp qw(tempdir);
@@ -48,10 +49,10 @@ is($@, '', 'a perl that has them is not refused');
 # capability and nothing else.  Whether a directory here can really be made
 # owner-only is asked of Test::Permissions, so this skips on Windows, and on a
 # filesystem that ignores mode bits, rather than guessing from $^O.
-SKIP: {
-	skip 'a directory here cannot be made owner-only', 3
-		unless eval { require Test::Permissions; 1 }
-			&& Test::Permissions::can_revoke_create();
+subtest 'where a directory can be made owner-only' => sub {
+	test_needs 'Test::Permissions';
+	plan skip_all => 'a directory here cannot be made owner-only'
+		unless Test::Permissions::can_revoke_create();
 
 	ok(Class::Shared::_has_unix_sockets(), 'this perl has unix domain sockets');
 
@@ -61,6 +62,6 @@ SKIP: {
 	ok($ok, 'ensure_dir accepts an owner-only directory') or diag $why;
 	like(Class::Shared::socket_path($dir), qr/\Qclass-shared.sock\E\z/,
 		'and socket_path names the backend socket inside it');
-}
+};
 
 done_testing();

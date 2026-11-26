@@ -16,12 +16,10 @@ use strict;
 use warnings;
 
 use Test::Most;
+use Test::Needs;
 
 BEGIN {
-	foreach my $module (qw(Test::Mockingbird Test::Returns Test::Permissions Test::Without::Module)) {
-		eval "require $module; 1"
-			or plan skip_all => "$module is needed for the integration tests and is not installed";
-	}
+	test_needs 'Test::Mockingbird', 'Test::Returns', 'Test::Permissions', 'Test::Without::Module';
 
 	require Class::Shared;
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, which this perl cannot provide'
@@ -552,14 +550,14 @@ subtest 'without IO::Socket::SSL, unix sockets still work and TCP says why it ca
 	state_of("without SSL: $answer");
 
 	# Everything available: the same child, nothing hidden, gets as far as the network.
-	SKIP: {
-		skip 'IO::Socket::SSL is not installed', 1 unless eval { require IO::Socket::SSL; 1 };
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
 		my $with = in_child(sub {
 			eval { Class::Shared::Frontend->new($config{class}, host => '127.0.0.1', port => 1, tls_cert => $pem{client}, tls_key => $pem{'client-key'}, tls_ca => $pem{ca}, token => 't', timeout => $config{short_timeout}); 1 };
 			return $@;
 		});
 		like($with, qr/cannot reach a backend at 127\.0\.0\.1:1/, 'with the library present a TCP frontend fails only at the network');
-	}
+	};
 
 	my $frontend = frontend($dir);
 	$frontend->shared_shutdown;
@@ -570,7 +568,7 @@ subtest 'without IO::Socket::SSL, unix sockets still work and TCP says why it ca
 # ===========================================================================
 
 subtest 'a TCP backend with TLS serves frontends that hold the right credentials' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 
 	my $dir = private_dir();
 	my $token_file = File::Spec->catfile($dir, 'token');

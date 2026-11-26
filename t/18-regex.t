@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # The regular expressions that stand between a stranger's text and the rest of
@@ -10,9 +11,7 @@ use Class::Shared ();
 # pattern take for ever.  A pattern that backtracks badly shows as a hang, so
 # every hostile case runs under an alarm.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
 		. 'which this perl cannot provide (Class::Shared is Unix-only)'

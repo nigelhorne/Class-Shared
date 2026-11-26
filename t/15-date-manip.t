@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 
 # Date::Manip is not a dependency of Class::Shared.  It is large, and every site
 # that uses it loads its own copy.  Date::Manip::Date also keeps a date between
@@ -13,9 +14,7 @@ use Test::Needs { 'Date::Manip' => '6.00' };
 use Class::Shared ();
 
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
 		. 'which this perl cannot provide (Class::Shared is Unix-only)'

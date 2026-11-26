@@ -27,10 +27,14 @@ on 'test' => sub {
 	requires 'IO::Socket::SSL';
 	requires 'Lingua::Conjunction';
 	requires 'Test::DescribeMe';
+	requires 'Test::Memory::Cycle';
+	requires 'Test::Mockingbird';
 	requires 'Test::More', '0.98';
 	requires 'Test::Most';
 	requires 'Test::Needs';
 	requires 'Test::Permissions';
+	requires 'Test::Returns';
+	requires 'Test::Without::Module';
 	suggests 'Database::Abstraction', '0.57';
 	suggests 'Date::Manip', '6.00';
 	suggests 'Template';

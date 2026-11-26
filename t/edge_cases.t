@@ -48,12 +48,10 @@ BEGIN {
 }
 
 use Test::Most;
+use Test::Needs;
 
 BEGIN {
-	foreach my $module (qw(Test::Mockingbird Test::Returns Test::Permissions)) {
-		eval "require $module; 1"
-			or plan skip_all => "$module is needed for the edge case tests and is not installed";
-	}
+	test_needs 'Test::Mockingbird', 'Test::Returns', 'Test::Permissions';
 
 	require Class::Shared;
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, which this perl cannot provide'

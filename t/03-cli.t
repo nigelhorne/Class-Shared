@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # The commands talk to a backend over a unix socket in an owner-only directory:
@@ -9,9 +10,7 @@ use Class::Shared ();
 # directory here can really be made owner-only is asked of Test::Permissions,
 # which tries chmod rather than guessing from the platform's name.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'the command line admin talks to a backend over a unix '
 		. 'socket in an owner-only directory, which this perl cannot provide '

@@ -17,14 +17,12 @@ use strict;
 use warnings;
 
 use Test::Most;
+use Test::Needs;
 
 BEGIN {
 	# These are test-only tools that the distribution does not otherwise
 	# need, so their absence skips this file instead of failing an install.
-	foreach my $module (qw(Test::Mockingbird Test::Returns Test::Memory::Cycle)) {
-		eval "require $module; 1"
-			or plan skip_all => "$module is needed for the function tests and is not installed";
-	}
+	test_needs 'Test::Mockingbird', 'Test::Returns', 'Test::Memory::Cycle';
 
 	Test::Mockingbird->import;
 	Test::Returns->import;
@@ -289,8 +287,7 @@ subtest 'Class::Shared::normalise_fingerprint' => sub {
 
 # ------------------------------------------------------------ client_tls_options
 subtest 'Class::Shared::client_tls_options' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed'
-		unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 
 	my %with_ca = Class::Shared::client_tls_options(cert => 'c.pem', key => 'k.pem', ca => 'ca.pem');
 	state_of('with CA: ' . join(',', map { "$_=$with_ca{$_}" } sort keys %with_ca));
@@ -2067,8 +2064,8 @@ subtest 'Class::Shared::Frontend::_open' => sub {
 	restore_all();
 
 	# TCP, with the TLS layer replaced.
-	SKIP: {
-		skip 'IO::Socket::SSL is not installed', 8 unless eval { require IO::Socket::SSL; 1 };
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
 
 		my $tcp = bare_frontend(
 			transport => 'tcp', socket_path => undef, host => 'h.example', port => 7777, timeout => 3,
@@ -2104,7 +2101,7 @@ subtest 'Class::Shared::Frontend::_open' => sub {
 		is($args{SSL_fingerprint}, 'sha256$ab', 'a pin is passed on');
 		ok(!exists $args{SSL_ca_file}, 'and the CA is not');
 		restore_all();
-	}
+	};
 };
 
 # ----------------------------------------------------------------------- _greet
@@ -3157,7 +3154,7 @@ subtest 'Class::Shared::Backend::_setup_unix' => sub {
 
 # ----------------------------------------------------------------- _setup_tcp
 subtest 'Class::Shared::Backend::_setup_tcp' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 	my $certs = 't/certs';
 	plan skip_all => 'the test certificates are not here' unless -r "$certs/server.pem" && -r "$certs/ca.pem";
 
@@ -3484,21 +3481,25 @@ subtest 'Class::Shared::Backend::_accept' => sub {
 	cmp_ok($tls->{deadline}, '<=', time + $backend->{handshake_timeout}, 'that is the handshake timeout from now');
 	%{ $backend->{clients} } = ();
 
-	# A TLS layer that will not start refuses the connection.
-	mock('Class::Shared::Backend::_start_tls' => sub { return undef });
-	mock('IO::Socket::SSL::errstr' => sub { 'no ciphers' }) if eval { require IO::Socket::SSL; 1 };
-	my $refused = $visit->();
-	is($backend->_accept, undef, 'a TLS layer that will not start refuses the client');
-	like($logged->[-1][0] // '', qr/\Arefused a TLS connection: no ciphers\z/, 'saying why');
-	is($logged->[-1][1], 'warn', 'as a warning');
-	is(sysread($refused, $nothing, 1), 0, 'and closes it');
-	restore_all();
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
+
+		# A TLS layer that will not start refuses the connection.
+		mock('Class::Shared::Backend::_start_tls' => sub { return undef });
+		mock('IO::Socket::SSL::errstr' => sub { 'no ciphers' });
+		my $refused = $visit->();
+		is($backend->_accept, undef, 'a TLS layer that will not start refuses the client');
+		like($logged->[-1][0] // '', qr/\Arefused a TLS connection: no ciphers\z/, 'saying why');
+		is($logged->[-1][1], 'warn', 'as a warning');
+		is(sysread($refused, $nothing, 1), 0, 'and closes it');
+		restore_all();
+	};
 	$backend->{host} = undef;
 };
 
 # ------------------------------------------------------------------ _start_tls
 subtest 'Class::Shared::Backend::_start_tls' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 
 	my $backend = make_backend();
 	$backend->{tls_context} = 'the shared context';
@@ -3519,7 +3520,7 @@ subtest 'Class::Shared::Backend::_start_tls' => sub {
 
 # ---------------------------------------------------------------- _continue_tls
 subtest 'Class::Shared::Backend::_continue_tls' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 
 	my $backend = make_backend();
 	my $logged = capture_log($backend);

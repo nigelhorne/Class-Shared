@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 
 # A first-time user: no configuration, no hidden state, no knowledge of the
@@ -11,9 +12,7 @@ use Class::Shared ();
 # is wrong in one line, it carries no Perl source location or internal error,
 # it raises no warning, and it does not hang.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
 		. 'which this perl cannot provide (Class::Shared is Unix-only)'

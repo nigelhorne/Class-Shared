@@ -27,12 +27,10 @@ use strict;
 use warnings;
 
 use Test::Most;
+use Test::Needs;
 
 BEGIN {
-	foreach my $module (qw(Test::Mockingbird Test::Returns)) {
-		eval "require $module; 1"
-			or plan skip_all => "$module is needed for the unit tests and is not installed";
-	}
+	test_needs 'Test::Mockingbird', 'Test::Returns';
 
 	Test::Mockingbird->import;
 	Test::Returns->import;
@@ -433,8 +431,21 @@ subtest 'Class::Shared::normalise_fingerprint' => sub {
 	is_untouched('normalise_fingerprint', sub { Class::Shared::normalise_fingerprint($hex) }, errno => 1);
 };
 
+# Needs no TLS library, so it stands apart from the checks that do.
+subtest 'Class::Shared::client_tls_options without the TLS library' => sub {
+	# Without the TLS library it dies: make the library impossible to load.
+	{
+		local %INC = %INC;
+		delete $INC{'IO/Socket/SSL.pm'};
+		local @INC = (sub { die "Can't locate IO/Socket/SSL.pm in \@INC (simulated)\n" if $_[1] eq 'IO/Socket/SSL.pm'; return }, @INC);
+		throws_ok { Class::Shared::client_tls_options(cert => 'c', key => 'k', ca => 'x') } qr/Can't locate IO\/Socket\/SSL\.pm/,
+			'dies when IO::Socket::SSL is not installed';
+		hit('client_tls_options: dies without IO::Socket::SSL');
+	}
+};
+
 subtest 'Class::Shared::client_tls_options' => sub {
-	plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 };
+	test_needs 'IO::Socket::SSL';
 
 	my %ca = Class::Shared::client_tls_options(cert => 'c.pem', key => 'k.pem', ca => 'ca.pem');
 	is($ca{SSL_cert_file}, 'c.pem', 'the certificate this client shows');
@@ -456,16 +467,6 @@ subtest 'Class::Shared::client_tls_options' => sub {
 	# It does not check that the files exist, or that only one of ca and fingerprint was given.
 	lives_ok { Class::Shared::client_tls_options(cert => '/no/file', key => '/no/key', ca => '/no/ca') } 'does not check the files';
 	lives_ok { Class::Shared::client_tls_options(cert => 'c', key => 'k', ca => 'x', fingerprint => 'y') } 'does not check that only one was given';
-
-	# Without the TLS library it dies: make the library impossible to load.
-	{
-		local %INC = %INC;
-		delete $INC{'IO/Socket/SSL.pm'};
-		local @INC = (sub { die "Can't locate IO/Socket/SSL.pm in \@INC (simulated)\n" if $_[1] eq 'IO/Socket/SSL.pm'; return }, @INC);
-		throws_ok { Class::Shared::client_tls_options(cert => 'c', key => 'k', ca => 'x') } qr/Can't locate IO\/Socket\/SSL\.pm/,
-			'dies when IO::Socket::SSL is not installed';
-		hit('client_tls_options: dies without IO::Socket::SSL');
-	}
 
 	is_untouched('client_tls_options', sub { Class::Shared::client_tls_options(cert => 'c', key => 'k', ca => 'x') }, errno => 1);
 };
@@ -1212,19 +1213,16 @@ subtest 'Frontend accessors' => sub {
 
 	# A TCP frontend: the address is host:port and there is no socket path.
 	my $tcp_requests = script_backend();
-	{
-		plan skip_all => 'IO::Socket::SSL is not installed' unless eval { require IO::Socket::SSL; 1 } || 1;
-		mock('IO::Socket::SSL::new' => sub { open(my $fh, '<', File::Spec->devnull); return $fh }) if eval { require IO::Socket::SSL; 1 };
-	}
-	SKIP: {
-		skip 'IO::Socket::SSL is not installed', 3 unless eval { require IO::Socket::SSL; 1 };
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
+		mock('IO::Socket::SSL::new' => sub { open(my $fh, '<', File::Spec->devnull); return $fh });
 		my $tcp = Class::Shared::Frontend->new($config{class}, host => 'h.example', port => 7777, tls_cert => 'c', tls_key => 'k', tls_ca => 'ca', token => 'tok');
 		is($tcp->shared_address, 'h.example:7777', 'shared_address: host:port for TCP');
 		hit('shared_address: host:port');
 		is($tcp->shared_socket_path, undef, 'shared_socket_path: undef for TCP');
 		hit('shared_socket_path: undef for TCP');
 		is($tcp->shared_connected, 1, 'a TCP frontend is connected');
-	}
+	};
 	restore_all();
 
 	# After close.
@@ -1721,12 +1719,12 @@ subtest 'Class::Shared::Backend::run, when it cannot start' => sub {
 	is(slurp($file), "mine\n", 'is left as it was');
 
 	# TLS that cannot be set up.
-	SKIP: {
-		skip 'IO::Socket::SSL is not installed', 1 unless eval { require IO::Socket::SSL; 1 };
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
 		my $tls_dir = private_dir();
 		my $tls = Class::Shared::Backend->new(host => '127.0.0.1', port => 1, token => 't', tls_cert => '/no/cert', tls_key => '/no/key', tls_ca => '/no/ca', dir => $tls_dir, log => File::Spec->catfile($tls_dir, 'l'));
 		throws_ok { $tls->run } qr/\Acannot set up TLS for 127\.0\.0\.1:1: /, 'TLS that cannot be set up';
-	}
+	};
 
 	# Daemonize: the caller exits with status 0 and does not return.
 	my $daemon_dir = private_dir();
@@ -2008,6 +2006,17 @@ subtest 'Class::Shared::Backend, global state' => sub {
 # ===========================================================================
 
 subtest 'Every documented message and return state was exercised' => sub {
+	# What only IO::Socket::SSL can exercise is not owed where it is missing.
+	# The subtests above load it when it is there, so %INC says which.
+	if (!$INC{'IO/Socket/SSL.pm'}) {
+		delete @LEDGER{
+			'client_tls_options: options with a CA',
+			'client_tls_options: options with a pin',
+			'shared_address: host:port',
+			'shared_socket_path: undef for TCP',
+		};
+	}
+
 	foreach my $untested (sort keys %LEDGER) {
 		fail("the POD documents '$untested' and no test made it happen");
 	}

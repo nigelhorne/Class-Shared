@@ -69,10 +69,14 @@ WriteMakefile(
 		'IO::Socket::SSL'     => 0,
 		'Lingua::Conjunction' => 0,
 		'Test::DescribeMe' => 0,
+		'Test::Memory::Cycle' => 0,
+		'Test::Mockingbird'   => 0,
 		'Test::More'          => '0.98',
 		'Test::Most'          => 0,
 		'Test::Needs'         => 0,
 		'Test::Permissions'   => 0,
+		'Test::Returns'       => 0,
+		'Test::Without::Module' => 0,
 	},
 	META_MERGE       => {
 		'meta-spec' => {

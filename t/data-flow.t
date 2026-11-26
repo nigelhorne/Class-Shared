@@ -32,12 +32,10 @@ BEGIN {
 }
 
 use Test::Most;
+use Test::Needs;
 
 BEGIN {
-	foreach my $module (qw(Test::Mockingbird Test::Returns Test::Permissions)) {
-		eval "require $module; 1"
-			or plan skip_all => "$module is needed for the data-flow tests and is not installed";
-	}
+	test_needs 'Test::Mockingbird', 'Test::Returns', 'Test::Permissions';
 
 	require Class::Shared;
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, which this perl cannot provide'
@@ -214,11 +212,11 @@ subtest 'a message is defined, framed, consumed and gone' => sub {
 
 	my %options = (cert => 'c', key => 'k', ca => 'a');
 	my %copy = %options;
-	SKIP: {
-		skip 'IO::Socket::SSL is not installed', 1 unless eval { require IO::Socket::SSL; 1 };
+	subtest 'with IO::Socket::SSL' => sub {
+		test_needs 'IO::Socket::SSL';
 		Class::Shared::client_tls_options(%options);
 		is_deeply(\%options, \%copy, 'TLS option building does not change its input');
-	}
+	};
 };
 
 # A value the caller defined must be the value that is used, even when it is

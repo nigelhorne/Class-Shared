@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 
 # The Template Toolkit is not a dependency of Class::Shared.  It is a good
 # example of what the backend is for, because it is big and every site that
@@ -12,9 +13,7 @@ use Test::Needs 'Template';
 use Class::Shared ();
 
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
 		. 'which this perl cannot provide (Class::Shared is Unix-only)'

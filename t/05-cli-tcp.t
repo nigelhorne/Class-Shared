@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Test::More;
+use Test::Needs;
 use Class::Shared ();
 use File::Spec ();
 use File::Temp qw(tempdir);
@@ -20,9 +21,7 @@ use lib 't/lib';
 # owner-only, so a perl that cannot provide both is skipped rather than failing
 # when the backend starts.
 BEGIN {
-	eval { require Test::Permissions; 1 }
-		or plan skip_all => 'Test::Permissions is needed to say whether a '
-			. 'directory can really be made owner-only, and is not installed';
+	test_needs 'Test::Permissions';
 
 	plan skip_all => 'a backend here keeps its lock, pid file and log beside a '
 		. 'unix socket path in an owner-only directory, which this perl '
@@ -32,8 +31,7 @@ BEGIN {
 }
 
 BEGIN {
-	eval { require IO::Socket::SSL; 1 }
-		or plan skip_all => 'IO::Socket::SSL is required for the TCP tests';
+	test_needs 'IO::Socket::SSL';
 }
 
 use Net::SSLeay ();
