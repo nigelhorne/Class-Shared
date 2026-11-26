@@ -77,6 +77,15 @@ sub blob {
 	return 'x' x $size;
 }
 
+# A child that leaves with exit, so Perl's global destruction runs in it.
+sub fork_and_exit {
+	my $pid = fork;
+	die "cannot fork: $!" unless defined $pid;
+	exit 0 unless $pid;
+	waitpid($pid, 0);
+	return 'forked';
+}
+
 sub boom {
 	my $self = shift;
 	die "kaboom: @_";

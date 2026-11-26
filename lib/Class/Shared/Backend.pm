@@ -8,6 +8,7 @@ use Fcntl qw(:flock F_SETFD FD_CLOEXEC O_RDWR O_WRONLY O_CREAT O_EXCL);
 use File::Spec ();
 use IO::Socket::INET;
 use IO::Socket::UNIX;
+use Scalar::Util ();
 use Socket qw(SOCK_STREAM);
 use Storable ();
 use Time::HiRes ();
@@ -284,6 +285,7 @@ sub new {
 		listener      => undef,
 		lock          => undef,
 		owns_socket   => 0,
+		owner_pid     => undef,
 		address       => undef,
 	}, $class;
 
@@ -416,6 +418,11 @@ sub run {
 sub DESTROY {
 	my $self = shift;
 	return if $self->{cleaned};
+
+	# A target that forks leaves a copy of this object in the child, and the
+	# socket is not the child's to remove.
+	return if defined $self->{owner_pid} && $self->{owner_pid} != $$;
+
 	$self->{cleaned} = 1;
 
 	# A destructor must not disturb the $@ or $! of the code that was running
@@ -542,6 +549,7 @@ sub _setup_unix {
 	$self->{listener} = $listener;
 	$self->{address} = $self->{socket};
 	$self->{owns_socket} = 1;
+	$self->{owner_pid} = $$;
 
 	chmod 0600, $self->{socket}
 		or die "cannot set permissions on $self->{socket}: $!\n";
@@ -788,14 +796,20 @@ sub _read_deadline {
 	# A TLS handshake has its own deadline.
 	return () if $client->{handshaking};
 
-	return ($client->{partial_progress} + $self->{read_timeout},
-		'a request of which ' . length($client->{buffer})
-		. " bytes had arrived made no progress for $self->{read_timeout} second(s)")
-		if defined $client->{partial_progress};
+	my @partial = defined $client->{partial_progress}
+		? ($client->{partial_progress} + $self->{read_timeout},
+			'a request of which ' . length($client->{buffer})
+			. " bytes had arrived made no progress for $self->{read_timeout} second(s)")
+		: ();
 
-	return ($client->{greet_by},
-		"no accepted hello within $self->{handshake_timeout} second(s)")
-		if !$client->{greeted} && defined $client->{greet_by};
+	# Until a hello is accepted its deadline stands whatever else arrives, or
+	# a hello that never ends would keep its place for ever.
+	if (!$client->{greeted} && defined $client->{greet_by}) {
+		return @partial if @partial && $partial[0] < $client->{greet_by};
+		return ($client->{greet_by}, $self->_no_hello_reason);
+	}
+
+	return @partial if @partial;
 
 	# A reply still being written is write_timeout's business.
 	return ($client->{last_request} + $self->{idle_timeout},
@@ -804,6 +818,12 @@ sub _read_deadline {
 			&& !length $client->{outbuf};
 
 	return ();
+}
+
+sub _no_hello_reason {
+	my $self = shift;
+
+	return "no accepted hello within $self->{handshake_timeout} second(s)";
 }
 
 # Drop connections that have not sent what they should have in time.  One that
@@ -1108,6 +1128,13 @@ sub _serve_client {
 		last if $client->{closed};
 		last if $self->{stop};
 	}
+
+	# _expire_reads spares a connection with bytes waiting, so one that never
+	# stops sending is held to its hello deadline here, once they are read.
+	$self->_drop_client($client, $self->_no_hello_reason)
+		if !$client->{closed} && !$client->{greeted}
+			&& defined $client->{greet_by}
+			&& $client->{greet_by} <= Time::HiRes::time();
 
 	$client->{last_request} = Time::HiRes::time() if $completed;
 	$self->_account_inbound($client, $completed) unless $client->{closed};
@@ -1489,7 +1516,9 @@ sub _op_call {
 		return { ok => 1, result => [$answer] };
 	}
 
-	if (!$class->can($method) && !$class->can('AUTOLOAD')) {
+	# Asked of the object: a factory's new() may return another class.
+	my $target = Scalar::Util::blessed($object) ? $object : $class;
+	if (!$target->can($method) && !$target->can('AUTOLOAD')) {
 		return _failure('unknown_method', "$class has no method '$method'");
 	}
 

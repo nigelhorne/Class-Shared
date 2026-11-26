@@ -88,6 +88,9 @@ sub write_all {
 		my $written = syswrite($fh, $bytes, $length - $offset, $offset);
 
 		if (!defined $written) {
+			# A signal the program handled is not a fault in the connection.  A
+			# handler that dies still ends the write.
+			next if $!{EINTR};
 			return (0, "write failed: $!");
 		}
 		if ($written == 0) {
@@ -135,23 +138,20 @@ sub _read_exact {
 			my $pending = sysread($fh, $buffer, $length - length($buffer),
 				length($buffer));
 
+			next if !defined $pending && $!{EINTR};
 			return (undef, "read failed: $!") if !defined $pending;
 			return (undef, 'connection closed by peer') if $pending == 0;
 
 			next;
 		}
 
-		if (defined $timeout) {
-			my $rin = '';
-			vec($rin, fileno($fh), 1) = 1;
-			my $ready = select(my $rout = $rin, undef, undef, $timeout);
-			return (undef, 'timed out waiting for a reply')
-				if !defined $ready || $ready <= 0;
-		}
+		return (undef, 'timed out waiting for a reply')
+			if defined $timeout && !_wait_readable($fh, $timeout);
 
 		my $got = sysread($fh, $buffer, $length - length($buffer), length($buffer));
 
 		if (!defined $got) {
+			next if $!{EINTR};
 			return (undef, "read failed: $!");
 		}
 		if ($got == 0) {
@@ -160,6 +160,33 @@ sub _read_exact {
 	}
 
 	return ($buffer);
+}
+
+# Purpose:       wait up to $timeout seconds for $fh to have something to read.
+# Entry:         $fh is an open handle; $timeout is in seconds.
+# Exit status:   1 if it has, 0 if the time ran out or select failed.
+# Side effects:  loads Time::HiRes.
+# Why:           a signal ends select early.  The wait goes on for what is left
+#                of the time, so repeated signals cannot stretch it.
+sub _wait_readable {
+	my ($fh, $timeout) = @_;
+
+	require Time::HiRes;
+
+	my $rin = '';
+	vec($rin, fileno($fh), 1) = 1;
+
+	my $deadline = Time::HiRes::time() + $timeout;
+	my $left = $timeout;
+
+	while (1) {
+		my $ready = select(my $rout = $rin, undef, undef, $left);
+		return 1 if $ready > 0;
+		return 0 unless $ready < 0 && $!{EINTR};
+
+		$left = $deadline - Time::HiRes::time();
+		$left = 0 if $left < 0;
+	}
 }
 
 # Incremental parser for the backend's select loop.  With a secret, a frame

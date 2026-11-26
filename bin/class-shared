@@ -221,6 +221,9 @@ sub tcp_endpoint {
 	fatal('a TCP listener needs both --host and --port')
 		if defined $host xor defined $port;
 
+	fatal('use either --socket or --host/--port, not both')
+		if defined $host && defined $opt{socket} && length $opt{socket};
+
 	return ($host, $port);
 }
 
@@ -253,7 +256,7 @@ sub token {
 	fatal("a unix socket needs no token: $Class::Shared::UNIX_TRUST_REASON")
 		unless defined $host;
 
-	return Class::Shared::read_secret($opt{token_file});
+	return or_fatal(sub { Class::Shared::read_secret($opt{token_file}) });
 }
 
 sub tls_options {
@@ -297,12 +300,24 @@ sub tls_options {
 		if $has_ca && $has_pin;
 
 	if ($has_pin) {
-		$tls{tls_fingerprint} = Class::Shared::normalise_fingerprint($tls{tls_fingerprint});
+		$tls{tls_fingerprint} = or_fatal(
+			sub { Class::Shared::normalise_fingerprint($tls{tls_fingerprint}) });
 	} else {
 		delete $tls{tls_fingerprint};
 	}
 
 	return %tls;
+}
+
+# A helper that dies is reported like every other error, with exit status 1: a
+# raw die would exit with whatever errno held, which can look like a usage error.
+sub or_fatal {
+	my ($code) = @_;
+
+	my $value = eval { $code->() };
+	fatal($@) unless defined $value;
+
+	return $value;
 }
 
 sub talk {

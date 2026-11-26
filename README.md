@@ -856,12 +856,12 @@ handle) sees the backend's environment, not yours: its `%ENV` is the one the
 backend was started with, and every client shares those values.  Pass such
 state as arguments if it matters, or set the environment when you start the
 backend.
-- A client may name any method of the target object, including a
-package-qualified one such as `Other::Package::function`, which Perl resolves
-without regard to the object's class.  Only `new`, `DESTROY` and `AUTOLOAD`
-are refused.  This is inside the trust model, since a client that has passed
-the transport's authentication can already make the backend load any module,
-but it means the backend is only as safe as the clients allowed to reach it.
+- A client may call a method only by its plain name.  A package-qualified name
+such as `Other::Package::function` is refused, and so are `new`, `DESTROY`
+and `AUTOLOAD`.  This is not a sandbox: a client that has passed the
+transport's authentication can already make the backend load any module and
+call the methods of what it constructs, so the backend is only as safe as the
+clients allowed to reach it.
 
 ## Platforms
 

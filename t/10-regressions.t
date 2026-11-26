@@ -18,6 +18,8 @@ BEGIN {
 
 use File::Temp qw(tempdir);
 use POSIX ();
+use IO::Socket::UNIX;
+use Time::HiRes ();
 use lib 't/lib';
 
 use Class::Shared::Frontend;
@@ -266,6 +268,136 @@ SKIP: {
 # The poll interval is one number, shared.
 is($Class::Shared::POLL_INTERVAL, 0.02, 'the polling interval is the documented 0.02 seconds');
 is(Class::Shared::poll_pause(), undef, 'poll_pause returns nothing');
+
+# ----------------------------------------------------------------- signals
+
+# A signal that the program handles interrupts a read or a write.  That is not a
+# lost connection: it used to close the frontend, and the object with it.
+{
+	my $slow = Class::Shared::Frontend->new('Shared::Counter', dir => $dir);
+	my $signals = 0;
+	local $SIG{ALRM} = sub { $signals++ };
+
+	Time::HiRes::alarm(0.2);
+	my $answer = eval { $slow->sleepy(1) };
+	Time::HiRes::alarm(0);
+
+	is($signals, 1, 'a signal arrived during the call');
+	is($answer, 1, 'and the call still returned its answer') or diag $@;
+	ok($slow->shared_connected, 'and the connection is still open');
+}
+
+{
+	pipe(my $reader, my $writer) or die "cannot make a pipe: $!";
+	local $SIG{ALRM} = sub { };
+
+	# A repeating signal must not keep restarting the timeout.
+	my $started = Time::HiRes::time();
+	Time::HiRes::alarm(0.1, 0.1);
+	my (undef, $error) = Class::Shared::Protocol::read_frame($reader, 0.5);
+	Time::HiRes::alarm(0);
+
+	like($error, qr/timed out/, 'an interrupted read still times out');
+	cmp_ok(Time::HiRes::time() - $started, '<', 3, 'and on time');
+
+	# Far more than a pipe holds, so the write blocks until the child reads.
+	my $bytes = 'x' x (4 * 1024 * 1024);
+	my $pid = fork;
+	die "cannot fork: $!" unless defined $pid;
+	if (!$pid) {
+		close($writer);
+		select(undef, undef, undef, 0.5);
+		1 while sysread($reader, my $chunk, 65536);
+		POSIX::_exit(0);
+	}
+	close($reader);
+
+	Time::HiRes::alarm(0.1);
+	my ($ok, $why) = Class::Shared::Protocol::write_all($writer, $bytes);
+	Time::HiRes::alarm(0);
+	close($writer);
+	waitpid($pid, 0);
+
+	ok($ok, 'an interrupted write carries on') or diag $why;
+}
+
+# --------------------------------------------------------- unfinished hellos
+
+# A connection that has not said hello has handshake_timeout to do it, whether
+# it says nothing or sends a hello that never ends.
+{
+	my $slow_dir = tempdir(CLEANUP => 1);
+	local $ENV{Class__Shared__Backend__handshake_timeout} = 1;
+
+	my $admin = Class::Shared::Frontend->new('Shared::Counter', dir => $slow_dir);
+	my $socket = IO::Socket::UNIX->new(Peer => $admin->shared_socket_path)
+		or die "cannot connect: $!";
+
+	local $SIG{PIPE} = 'IGNORE';
+	syswrite($socket, pack('N', 1000));
+
+	my $dropped = 0;
+	for (1 .. 20) {
+		my $readable = '';
+		vec($readable, fileno($socket), 1) = 1;
+		if (select($readable, undef, undef, 0.2)) {
+			$dropped = 1;
+			last;
+		}
+		syswrite($socket, 'x');
+	}
+
+	ok($dropped, 'a hello that dribbles in is dropped at handshake_timeout');
+
+	$admin->shared_shutdown;
+}
+
+# ------------------------------------------------------------ forking targets
+
+# A method that forks leaves a copy of the backend in the child.  When that
+# child exits it must not remove the socket of the backend it was copied from.
+{
+	my $forker = Class::Shared::Frontend->new('Shared::Counter', dir => $dir);
+
+	is($forker->fork_and_exit, 'forked', 'a method may fork');
+	ok(-S $forker->shared_socket_path, 'and the child leaves the socket alone');
+}
+
+# ------------------------------------------------------------------ factories
+
+# Methods are those of the object, which need not be of the class asked for.
+{
+	my $factory = Class::Shared::Frontend->new('Shared::Factory', dir => $dir);
+
+	ok($factory->can('hello'), 'can() sees the method of the product');
+	is(eval { $factory->hello }, 'hello from the product', 'and it can be called') or diag $@;
+
+	eval { $factory->no_such_method };
+	like($@, qr/has no method 'no_such_method'/, 'a missing method is still refused');
+}
+
+# ------------------------------------------------------- command-line refusals
+
+for my $command (qw(status stop)) {
+	my $out = qx{$^X -Ilib bin/class-shared $command --host 127.0.0.1 --port 1 --token-file $dir/nope --tls-cert c --tls-key k --tls-ca a 2>&1};
+
+	is($? >> 8, 1, "$command: an unreadable token file exits 1");
+	like($out, qr/\Aclass-shared: Class::Shared: cannot read/, 'and is reported as a CLI error');
+
+	$out = qx{$^X -Ilib bin/class-shared $command --host 127.0.0.1 --port 1 --tls-cert c --tls-key k --tls-fingerprint zz 2>&1};
+
+	is($? >> 8, 1, "$command: a bad fingerprint exits 1");
+	like($out, qr/\Aclass-shared: Class::Shared: 'zz' is not/, 'and is reported as a CLI error');
+}
+
+for my $words ("start -f --listen tcp:127.0.0.1:1", 'status --host 127.0.0.1 --port 1',
+	'stop --host 127.0.0.1 --port 1')
+{
+	my $out = qx{$^X -Ilib bin/class-shared $words --socket $dir/x.sock 2>&1};
+
+	is($? >> 8, 1, "$words: --socket with TCP exits 1");
+	like($out, qr/either --socket or/, 'and is refused');
+}
 
 $counter->shared_shutdown;
 
