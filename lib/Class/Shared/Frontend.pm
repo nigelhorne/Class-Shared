@@ -1503,6 +1503,10 @@ C<port>.  Remove them: a unix socket does not use them.
 
 Both options name the same secret.  Remove one of them.
 
+=item C<Class::Shared::Frontend-E<gt>new: port must be a whole number from 1 to 65535>
+
+The C<port> given with C<host> is not a number in that range.  Correct it.
+
 =item C<Class::Shared: cannot reach a backend at ADDRESS: REASON>
 
 Nothing is listening and a backend was not started, because C<autostart> is off

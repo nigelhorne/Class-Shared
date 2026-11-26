@@ -30,10 +30,22 @@ use POSIX ();
 use Time::HiRes ();
 
 use Test::Most;
+use Test::Needs;
 
 use Class::Shared;
 use Class::Shared::Frontend;
 use Class::Shared::Protocol;
+
+# Like the rest of the suite, these need a unix socket in a directory only its
+# owner can write to.
+BEGIN {
+	test_needs 'Test::Permissions';
+
+	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
+		. 'which this perl cannot provide (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
+}
 
 # Nothing below repeats a limit, a mode or a message: the numbers the tests
 # probe come from here, and the module's own variables are asserted against

@@ -791,8 +791,9 @@ B<Dies> if L<IO::Socket::SSL> is not installed.
 
     {
         type   => 'arrayref',
-        min    => 8,
-        description => 'a flat list of option name and value pairs: SSL_cert_file, SSL_key_file, SSL_verify_mode, and either SSL_ca_file or (SSL_fingerprint, SSL_force_fingerprint, SSL_verifycn_scheme)',
+        min    => 10,
+        max    => 14,
+        description => 'a flat list of option name and value pairs: SSL_version, SSL_cert_file, SSL_key_file, SSL_verify_mode, and either SSL_ca_file or (SSL_fingerprint, SSL_force_fingerprint, SSL_verifycn_scheme)',
     }
 
 =head2 dir_of
@@ -1033,8 +1034,8 @@ characters (see L</check_socket_path>).
     my $path = Class::Shared::check_socket_path($path);
 
 Returns C<$path> if it is short enough to be a socket address, and dies if it
-is not, or if no path is given at all.  The limit is 100 characters, which is less than the operating system's
-limit so that the code stays portable.  Without this check the system would cut
+is not, or if no path is given at all.  The limit is 100 characters, which is
+less than the operating system's limit so that the code stays portable.  Without this check the system would cut
 a long path short without saying so, and a client and a backend could end up
 using two different sockets.
 
@@ -1042,6 +1043,11 @@ The frontend, the backend and F<class-shared> all use it for a C<socket> that
 you give yourself, as well as for the path that C<socket_path> builds.
 
 B<Side effects:> none.
+
+B<Dies> with C<Class::Shared: no socket path given> if C<$path> is undef or
+empty, and with C<Class::Shared: socket path 'PATH' is N characters, more than
+the 100 allowed; set CLASS_SHARED_DIR or pass dir =E<gt> to a shorter
+directory> if it is too long.
 
 =head3 API SPECIFICATION
 
@@ -1063,10 +1069,11 @@ B<Side effects:> none.
     length 0 or undef  ""               dies
 
     Boundary values: 100 is accepted and 101 dies; 0 and undef die.  The limit
-    is 100 characters, not bytes, and is deliberately below the operating
-    system's so that a path is never silently truncated into a socket that a
-    backend is not listening on.  A multibyte path is counted in characters
-    and returned unchanged.
+    is 100 characters, not bytes, and is below the operating system's, which
+    counts bytes.  A path of ASCII characters that is accepted therefore fits.
+    A multibyte path is counted in characters and returned unchanged, so one
+    that is accepted can still be too long for the operating system, which
+    then cuts it short.  See L</ENCODING>.
 
 =head4 Output
 
@@ -1650,11 +1657,12 @@ where C<trim> removes white space from the end only.
 =head2 check_socket_path
 
     ┌─ CheckSocketPath ───────────────────────────────────────
-    │ path? : STRING
+    │ path? : STRING⊥
     │ out!  : RESULT[PATH]
     ├─────────────────────────────────────────────────────────
-    │ #path? ≤ MAXPATH ⇒ out! = value(path?)
-    │ #path? > MAXPATH ⇒ ∃ m • out! = dies(m)
+    │ path? ≠ ⊥ ∧ 0 < #path? ≤ MAXPATH ⇒ out! = value(path?)
+    │ path? = ⊥ ∨ #path? = 0           ⇒ ∃ m • out! = dies(m)
+    │ path? ≠ ⊥ ∧ #path? > MAXPATH     ⇒ ∃ m • out! = dies(m)
     └─────────────────────────────────────────────────────────
 
 =head2 poll_pause
