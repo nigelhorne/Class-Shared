@@ -156,6 +156,7 @@ my %LEDGER = map { $_ => 1 } (
 	'new: unknown option',
 	'new: a unix socket needs no token',
 	'new: a unix socket needs no TLS',
+	'new: give token or token_file, not both',
 	'new: a TCP backend needs both host and port',
 	'new: use either socket or host/port',
 	'new: a TCP backend needs tls_cert and tls_key',
@@ -1051,6 +1052,9 @@ subtest 'Class::Shared::Frontend::new' => sub {
 		qr/${prefix}a unix socket needs no token: its mode 0600 file already decides who may connect\n\z/, 'a token on a unix socket';
 	throws_ok { Class::Shared::Frontend->new($config{class}, socket => $path, token_file => '/x') } qr/a unix socket needs no token/, 'a token file too';
 	hit('new: a unix socket needs no token');
+	throws_ok { Class::Shared::Frontend->new($config{class}, host => 'h', port => 1, token => 'x', token_file => '/x') }
+		qr/${prefix}give token or token_file, not both\n\z/, 'both a token and a token file';
+	hit('new: give token or token_file, not both');
 	foreach my $tls (qw(tls_cert tls_key tls_ca tls_fingerprint)) {
 		throws_ok { Class::Shared::Frontend->new($config{class}, socket => $path, $tls => 'x') } qr/${prefix}a unix socket needs no TLS: /, "$tls on a unix socket";
 	}

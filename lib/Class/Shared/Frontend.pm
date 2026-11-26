@@ -86,8 +86,13 @@ sub new {
 			&& grep { defined $opt{$_} && length $opt{$_} }
 				qw(tls_cert tls_key tls_ca tls_fingerprint);
 
-	my $token = $opt{token};
-	$token = Class::Shared::read_secret($opt{token_file}) if defined $opt{token_file};
+	# Two sources of one secret: picking one would hide a mistake in the other.
+	die "Class::Shared::Frontend->new: give token or token_file, not both\n"
+		if defined $opt{token} && defined $opt{token_file};
+
+	my $token = defined $opt{token_file}
+		? Class::Shared::read_secret($opt{token_file})
+		: $opt{token};
 
 	if ($transport eq 'tcp') {
 		die "Class::Shared::Frontend->new: a TCP backend needs both host and port\n"
@@ -115,7 +120,7 @@ sub new {
 	}
 
 	my $socket_path = $transport eq 'unix'
-		? ($opt{socket}
+		? (defined $opt{socket} && length $opt{socket}
 			? Class::Shared::check_socket_path($opt{socket})
 			: Class::Shared::socket_path($opt{dir}))
 		: undef;
@@ -136,7 +141,9 @@ sub new {
 		ctor        => $opt{ctor} || [],
 		autostart   => exists $opt{autostart} ? $opt{autostart} : 1,
 		timeout     => defined $opt{timeout} ? $opt{timeout} : $DEFAULT_TIMEOUT,
-		log         => $opt{log} || (($socket_path || Class::Shared::socket_path($opt{dir})) . '.log'),
+		# Only a unix backend is ever started from here, so only it has a log.
+		log         => defined $opt{log} && length $opt{log} ? $opt{log}
+			: $transport eq 'unix' ? "$socket_path.log" : undef,
 		sock        => undef,
 		pid         => undef,
 		id          => undef,
@@ -434,6 +441,7 @@ sub _open {
 
 	my $path = $self->{socket_path};
 
+	# TODO: Data Flow Anomaly - DD: redefined unread by each later failure, and cleared unread by _greet on success
 	$self->{last_error} = "no socket at $path";
 	return undef unless -S $path;
 
@@ -636,35 +644,32 @@ sub _spawn_backend {
 	# We hold the lock, so a socket that will not answer is a leftover.
 	# Only a socket is removed as a leftover: a path that names anything else
 	# is not ours to delete, whatever the caller meant by it.
-	if (-e $path && !-S $path) {
-		$self->{last_error} = "$path exists and is not a socket; refusing to remove it";
+	my $state = $self->_remove_stale($path);
+	if (!$state) {
 		$self->_close($lock, $lock_path);
 		return undef;
 	}
 
-	if (-e $path && !unlink($path)) {
-		$self->{last_error} = "cannot remove the stale socket $path: $!";
-		$self->_close($lock, $lock_path);
-		return undef;
-	}
+	# A backend that is running but slow to answer is waited for, not replaced.
+	if ($state ne 'running') {
+		my $pid = fork;
+		if (!defined $pid) {
+			$self->{last_error} = "fork failed: $!";
+			$self->_close($lock, $lock_path);
+			return undef;
+		}
 
-	my $pid = fork;
-	if (!defined $pid) {
-		$self->{last_error} = "fork failed: $!";
-		$self->_close($lock, $lock_path);
-		return undef;
-	}
+		if ($pid == 0) {
+			$self->_exec_backend($lock);
+			# not reached
+		}
 
-	if ($pid == 0) {
-		$self->_exec_backend($lock);
-		# not reached
+		# The first child only forks the daemon and exits; waiting for it stops it
+		# being left as a zombie.  Its status says nothing about the backend, which
+		# is judged by whether it answers below, and waitpid fails harmlessly when
+		# SIGCHLD is ignored.
+		waitpid($pid, 0);
 	}
-
-	# The first child only forks the daemon and exits; waiting for it stops it
-	# being left as a zombie.  Its status says nothing about the backend, which
-	# is judged by whether it answers below, and waitpid fails harmlessly when
-	# SIGCHLD is ignored.
-	waitpid($pid, 0);
 
 	my $deadline = time + $self->{timeout};
 	my $sock;
@@ -685,7 +690,46 @@ sub _spawn_backend {
 
 	$self->_close($lock, $lock_path);
 
+	$self->{last_error} = "a backend is running at $path but did not answer: "
+		. ($self->{last_error} // 'no reason was given')
+		if !$sock && $state eq 'running';
+
 	return $sock;
+}
+
+# Purpose:       remove the socket a dead backend left, and only that.
+# Entry:         $path is the socket path; the spawn lock is held.
+# Exit status:   'running' if a backend owns the path, 'clear' if nothing is in
+#                the way of a new one, undef (with last_error set) otherwise.
+# Side effects:  may unlink $path.
+# Why:           silence is not death: a backend busy with a long method does
+#                not answer.  A running backend holds a lock on PATH.owner, so
+#                the lock tells the two apart.  It is held while unlinking, so a
+#                backend starting at this moment waits and keeps its new socket.
+sub _remove_stale {
+	my ($self, $path) = @_;
+
+	my $owner_path = "$path.owner";
+	my $owner;
+	if (!sysopen($owner, $owner_path, O_RDWR | O_CREAT, 0600)) {
+		$self->{last_error} = "cannot open $owner_path: $!";
+		return undef;
+	}
+
+	my $state = 'running';
+	if (flock($owner, LOCK_SH | LOCK_NB)) {
+		$state = 'clear';
+		if (-e $path && !-S $path) {
+			$self->{last_error} = "$path exists and is not a socket; refusing to remove it";
+			$state = undef;
+		} elsif (-e $path && !unlink($path)) {
+			$self->{last_error} = "cannot remove the stale socket $path: $!";
+			$state = undef;
+		}
+	}
+	$self->_close($owner, $owner_path);
+
+	return $state;
 }
 
 # Purpose:       pass on a refusal that a running backend gave to the handshake.
@@ -939,7 +983,8 @@ is refused at the handshake and gets no object.  It is a second check on top of
 TLS, not a replacement for it.  A unix socket takes none -- its mode 0600 file
 already decides who may connect -- and C<new> dies if one is given.  Prefer
 C<token_file>; a secret passed as C<token> is visible to anything that can read
-this process's memory or command line.
+this process's memory or command line.  Give one or the other: C<new> dies if
+both are given.
 
 =item autostart
 
@@ -1414,6 +1459,10 @@ You spelled an option wrong.  Check L</OPTIONS>.
 You gave C<token>, C<token_file> or a C<tls_*> option without C<host> and
 C<port>.  Remove them: a unix socket does not use them.
 
+=item C<Class::Shared::Frontend-E<gt>new: give token or token_file, not both>
+
+Both options name the same secret.  Remove one of them.
+
 =item C<Class::Shared: cannot reach a backend at ADDRESS: REASON>
 
 Nothing is listening and a backend was not started, because C<autostart> is off
@@ -1422,6 +1471,10 @@ or the backend is on TCP.  Start the backend with C<class-shared start>.
 =item C<Class::Shared: could not start a backend: REASON (socket PATH, log PATH)>
 
 The automatic start failed.  Read the log file named in the message.
+
+When C<REASON> begins C<a backend is running at PATH but did not answer>, nothing
+was started or removed: the backend is there, usually busy running another
+client's method.  Try again, or raise C<timeout>.
 
 =item C<Class::Shared: cannot load CLASS: ERROR>
 
@@ -1739,7 +1792,10 @@ frontend stores the backend's pid.
 
 Trigger: nothing answers, the transport is a unix socket and C<autostart> is
 true.  Action: take a lock file, make sure the directory is safe, remove a
-leftover socket, fork a backend and wait.
+leftover socket, fork a backend and wait.  A socket is leftover only if no
+backend holds the lock on the file named by the socket path plus C<.owner>.  A
+backend that holds it but does not answer is waited for, and nothing of its is
+removed.
 
 =item SPAWNING to HANDSHAKEN
 

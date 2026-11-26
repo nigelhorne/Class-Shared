@@ -245,7 +245,8 @@ sub new {
 		socket        => $socket,
 		host          => $host,
 		port          => $port,
-		token         => $opt{token},
+		# An empty token is none: kept, it would sign frames with an empty key.
+		token         => $has_token ? $opt{token} : undef,
 		tls_cert      => $opt{tls_cert},
 		tls_key       => $opt{tls_key},
 		tls_ca        => $opt{tls_ca},
@@ -387,6 +388,12 @@ sub run {
 	if (!$started) {
 		my $error = $@ || 'unknown error';
 		$self->_log("fatal: $error", 'error');
+
+		# Give back whatever was taken before the failure, so that another
+		# start can succeed while this object is still alive.
+		$self->_cleanup;
+		@{$self}{qw(cleaned owns_socket)} = (0, 0);
+
 		die $error unless $self->{daemonize};
 		exit 1;
 	}
@@ -531,12 +538,13 @@ sub _setup_unix {
 
 	die "cannot listen on $self->{socket}: $bind_error\n" unless $listener;
 
-	chmod 0600, $self->{socket}
-		or die "cannot set permissions on $self->{socket}: $!\n";
-
+	# Recorded before anything else can fail, so that the failure cleans it up.
 	$self->{listener} = $listener;
 	$self->{address} = $self->{socket};
 	$self->{owns_socket} = 1;
+
+	chmod 0600, $self->{socket}
+		or die "cannot set permissions on $self->{socket}: $!\n";
 
 	return 1;
 }
@@ -839,22 +847,29 @@ sub _trim_log {
 	return 1 unless lstat($path) && -f _ && -s _ > $limit;
 
 	local ($!, $@);
+
+	# From here on only this handle is read and emptied.  The name may come to
+	# mean another file at any moment, so check that what was opened is what the
+	# name meant: a plain file, not a link to one.
+	open(my $log, '+<', $path) or return 1;
+	my @opened = stat($log);
+	my @named = lstat($path);
+	return 1 unless @named && -f _ && $named[0] == $opened[0] && $named[1] == $opened[1];
+
 	my $old = "$path.1";
 
 	# Made anew, owner only, so that nothing already there is written through.
 	unlink($old);
 	if (sysopen(my $to, $old, O_WRONLY | O_CREAT | O_EXCL, 0600)) {
-		if (open(my $from, '<', $path)) {
-			while (sysread($from, my $chunk, $READ_CHUNK)) {
-				last unless syswrite($to, $chunk);
-			}
-			close($from);
+		while (sysread($log, my $chunk, $READ_CHUNK)) {
+			last unless syswrite($to, $chunk);
 		}
 		close($to);
 	}
 
 	# Emptied even if the copy failed: bounding the disk is the point.
-	truncate($path, 0);
+	truncate($log, 0);
+	close($log);
 
 	return 1;
 }
@@ -941,6 +956,7 @@ sub _accept {
 			return;
 		}
 
+		# TODO: Data Flow Anomaly - DD: for TLS, fh was defined with the plain socket and is redefined unread
 		$client->{fh}          = $ssl;
 		$client->{handshaking} = 1;
 		$client->{want_write}  = 0;
@@ -1608,9 +1624,9 @@ sub _cleanup {
 	%{$self->{objects}} = ();
 	%{$self->{clients}} = ();
 
-	$self->_unlink($self->{control} . '.pid');
-
+	# Without the lock the pid file belongs to some other backend.
 	if ($self->{lock}) {
+		$self->_unlink($self->{control} . '.pid');
 		flock($self->{lock}, LOCK_UN)
 			or $self->_log("cannot release the lock: $!", 'error');
 		$self->_close($self->{lock}, 'the lock file');

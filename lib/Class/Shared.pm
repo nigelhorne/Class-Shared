@@ -524,7 +524,12 @@ sub ensure_dir {
 	_require_unix_sockets('a backend directory');
 
 	if (!-d $dir) {
-		mkdir($dir, 0700) or return (0, "cannot create $dir: $!");
+		# Losing a race to make it is not a failure; what the winner made is
+		# checked below like any directory that was already there.
+		if (!mkdir($dir, 0700)) {
+			my $why = "$!";
+			return (0, "cannot create $dir: $why") unless -d $dir;
+		}
 	}
 
 	return _check_dir($dir);

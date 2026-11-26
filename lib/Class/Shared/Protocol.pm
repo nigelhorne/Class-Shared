@@ -224,6 +224,7 @@ sub _too_deep {
 sub _decode {
 	my ($payload, $secret, $check) = @_;
 
+	# TODO: Data Flow Anomaly - DD: when there is a secret, body is redefined below before it is read
 	my $body = $payload;
 
 	if (defined $secret) {

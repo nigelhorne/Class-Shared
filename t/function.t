@@ -1458,12 +1458,14 @@ subtest 'Class::Shared::Frontend::new' => sub {
 	my $pinned = $make->('Some::Class', %tcp, tls_ca => undef, tls_fingerprint => join(':', ($config{fingerprint} =~ /(..)/g)));
 	is($pinned->{tls_fingerprint}, 'sha256$' . lc $config{fingerprint}, 'a pin is stored in the normal form');
 
-	# The token comes from the option or from the file, the file winning.
+	# The token comes from the option or from the file, never both.
 	my $token_file = File::Spec->catfile($dir, 'token');
 	open(my $fh, '>', $token_file) or die; print {$fh} "from file\n"; close($fh);
 	is($make->('Some::Class', %tcp, token => 'direct')->{token}, 'direct', 'a token option');
 	is($make->('Some::Class', %tcp, token_file => $token_file)->{token}, 'from file', 'a token file');
-	is($make->('Some::Class', %tcp, token => 'direct', token_file => $token_file)->{token}, 'from file', 'the file wins');
+	$new_dies->(qr/${prefix}give token or token_file, not both\n\z/, 'both together',
+		'Some::Class', %tcp, token => 'direct', token_file => $token_file);
+	is($make->('Some::Class', %tcp, token => 'direct', token_file => undef)->{token}, 'direct', 'an undef token file is not given');
 	$new_dies->(qr/cannot read \Q$dir\E\/no-such-token/, 'a missing token file', 'Some::Class', %tcp, token_file => "$dir/no-such-token");
 
 	# --- the socket path
@@ -2428,8 +2430,11 @@ subtest 'Class::Shared::Frontend::_spawn_backend' => sub {
 		mock('Class::Shared::Frontend::_greet' => sub { undef });
 		mock('Class::Shared::Frontend::_exec_backend' => sub { $exec_calls++; POSIX::_exit(0) });
 		mock('Class::Shared::ensure_dir' => sub { (1, undef) });
-		# The lock file has to be creatable, so make it first, then close the directory.
-		open(my $pre, '>', "$locked_path.spawn") or die; close($pre);
+		# The lock files have to be openable, so make them first (a dead backend
+		# leaves its .owner behind), then close the directory.
+		for my $suffix (qw(spawn owner)) {
+			open(my $pre, '>', "$locked_path.$suffix") or die; close($pre);
+		}
 		chmod 0500, $locked;
 		is($victim->_spawn_backend, undef, 'a stale socket that cannot be removed gives no backend');
 		like($victim->{last_error}, qr/\Acannot remove the stale socket \Q$locked_path\E: Permission denied\z/, 'with the reason');
@@ -2851,7 +2856,7 @@ subtest 'Class::Shared::Backend::run' => sub {
 	mock('Class::Shared::Backend::_setup' => sub { die "cannot bind\n" });
 	throws_ok { $backend->run } qr/\Acannot bind\n\z/, 'a failed setup is rethrown with its own text';
 	is_deeply($logged->[0], ["fatal: cannot bind\n", 'error'], 'after being logged as an error');
-	is_deeply(\@steps, [], 'and nothing else ran');
+	is_deeply(\@steps, ['cleanup'], 'and only what the start had taken is given back');
 
 	mock('Class::Shared::Backend::_setup' => sub { die });
 	throws_ok { $backend->run } qr/Died/, 'a setup that dies with no text still dies';

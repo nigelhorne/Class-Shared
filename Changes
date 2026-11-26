@@ -1,6 +1,16 @@
 Revision history for Class-Shared
 
 0.001.0    2026-11-25
+        - Fix: a frontend starting a backend could remove the socket of one that
+          was only busy, cutting off all its clients.  A backend holding its
+          .owner lock is now waited for and never replaced.
+        - Fix: a failed backend start releases its lock and removes its socket;
+          losing a race to create the directory is no longer an error; a log
+          swapped for a link while being trimmed is no longer followed; an empty
+          token given to a unix backend no longer signs frames; a socket or log
+          named "0" is used; a TCP frontend no longer needs a unix directory.
+        - Frontend new() now dies if given both token and token_file.
+        - New t/data-flow.t.
         - First release.
         - The remaining denial-of-service risks.  The log is copied to LOG.1 and
           emptied at max_log_size (10 MiB).  A connection that sends no accepted
