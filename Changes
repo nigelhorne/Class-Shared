@@ -2,6 +2,13 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - The backend stops a call to the target that runs too long.  New option
+          call_timeout (default 60 seconds, 0 for no limit) and a new reply kind,
+          timeout; without it one method that never returned held every client,
+          because the backend serves one request at a time.  The frontend's
+          timeout now also covers the wait for the answers to the handshake and
+          to the request for an object, so a backend that is busy with another
+          client's call gives a clear error instead of a silent wait.
         - t/integration.t: end-to-end tests with real backends (shared use by
           several frontends, two classes in one backend, the command line, a
           killed backend, bad or silent fake backends, unusable directories,

@@ -64,6 +64,7 @@ my %config = (
 	protocol       => 2,
 	fingerprint    => 'AB' x 32,
 	wait           => 0.3,        # a "timed out" case must not wait for long
+	quick          => 5,         # a call that must be stopped must end within this
 	start_wait     => 15,         # a backend must be reachable within this
 	stop_wait      => 15,
 	watchdog       => 240,        # the whole file must end within this
@@ -244,6 +245,10 @@ my %LEDGER = map { $_ => 1 } (
 	'protocol new: replies with an id',
 	'protocol new: die',
 	'protocol new: busy',
+	'protocol new: timeout',
+	'protocol call: timeout',
+	'protocol call: no limit when call_timeout is 0',
+	'Backend new: call_timeout default and range',
 	'protocol call: result list',
 	'protocol call: die',
 	'protocol call: unknown_object',
@@ -1441,6 +1446,16 @@ sub ok { 1 }
 1;
 CLASS
 
+	# new and a method that outlast any limit, so that "timeout" can be provoked.
+	$write->('Unit::Slow', <<'CLASS');
+package Unit::Slow;
+sub new { my ($class, %a) = @_; select(undef, undef, undef, $a{pause}) if $a{pause}; return bless {n => 0}, $class }
+sub nap { select(undef, undef, undef, $_[1]); return 'rested' }
+sub spin { 1 while 1 }
+sub count { return ++$_[0]{n} }
+1;
+CLASS
+
 	# can dies, so that the backend itself fails while handling a request.
 	$write->('Unit::Broken', <<'CLASS');
 package Unit::Broken;
@@ -1549,7 +1564,7 @@ subtest 'Class::Shared::Backend::new' => sub {
 	# Names and values.
 	throws_ok { Class::Shared::Backend->new(socket => $socket, bogus => 1) } qr/${prefix}an argument is not valid: .*bogus/s, 'an option name that is not known';
 	hit('Backend new: unknown option');
-	foreach my $bad ([port => 0], [port => 65536], [port => 'http'], [port => 80.5], [max_clients => 0], [max_objects => -1], [write_timeout => -1], [socket => ''], [daemonize => 'maybe']) {
+	foreach my $bad ([port => 0], [port => 65536], [port => 'http'], [port => 80.5], [max_clients => 0], [max_objects => -1], [write_timeout => -1], [call_timeout => -1], [call_timeout => 'soon'], [socket => ''], [daemonize => 'maybe']) {
 		throws_ok { Class::Shared::Backend->new(%tcp, @$bad) } qr/${prefix}an argument is not valid: /, "refuses $bad->[0] => $bad->[1]";
 	}
 	hit('Backend new: wrong type or range');
@@ -1886,6 +1901,53 @@ subtest 'Backend protocol' => sub {
 	is_deeply($r, { ok => 1, message => 'shutting down' }, 'shutdown replies first');
 	is(reap($b->{pid}), 0, 'and then the backend stops');
 	hit('protocol shutdown: replies first, then stops');
+};
+
+# A call that does not return holds every client of the one-request-at-a-time
+# backend, so call_timeout ends it with a "timeout" reply and the backend goes
+# on serving.  The limit is short here so that the test does not wait.
+subtest 'Backend protocol: call_timeout' => sub {
+	is($Class::Shared::Backend::CALL_TIMEOUT, 60, 'the default is the documented 60 seconds');
+	lives_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', call_timeout => 0) } 'call_timeout 0 (no limit) is accepted';
+	hit('Backend new: call_timeout default and range');
+
+	my $limit = 1;
+	my $b = start_backend(call_timeout => $limit);
+	my $sock = connect_to($b);
+	hello($sock, 'Unit::Slow');
+	my $id = ask($sock, { op => 'new', args => [] })->{id};
+
+	my $start = time;
+	my $r = ask($sock, { op => 'call', id => $id, method => 'nap', args => [$config{start_wait}], want => 'scalar' });
+	is_deeply([@{$r}{qw(ok kind error)}], [0, 'timeout', "nap took longer than call_timeout ($limit seconds) and was stopped"], 'a call over the limit is answered with kind timeout and the documented text');
+	cmp_ok(time - $start, '<', $config{quick}, 'and was stopped, not waited for');
+	hit('protocol call: timeout');
+
+	$r = ask($sock, { op => 'call', id => $id, method => 'spin', args => [], want => 'scalar' });
+	is($r->{kind}, 'timeout', 'a call that never sleeps (a busy loop) is stopped too');
+
+	is(ask($sock, { op => 'call', id => $id, method => 'count', args => [], want => 'scalar' })->{result}[0], 1, 'the object is still there and works');
+	is(ask($sock, { op => 'call', id => $id, method => 'nap', args => [0.1], want => 'scalar' })->{result}[0], 'rested', 'a call inside the limit is not affected');
+
+	# The constructor is a call to the target as well.
+	my $slow = connect_to($b);
+	hello($slow, 'Unit::Slow');
+	$r = ask($slow, { op => 'new', args => [pause => $config{start_wait}] });
+	is_deeply([@{$r}{qw(ok kind error)}], [0, 'timeout', "Unit::Slow->new took longer than call_timeout ($limit seconds) and was stopped"], 'a constructor over the limit is stopped');
+	hit('protocol new: timeout');
+	is(ask($slow, { op => 'ping' })->{objects}, 1, 'and no object was made for it');
+
+	like(slurp($b->{log}), qr/nap took longer than call_timeout \(1 seconds\) and was stopped/, 'the log says which call was stopped');
+	stop_backend($b);
+
+	# 0 means no limit.
+	my $free = start_backend(call_timeout => 0);
+	my $f = connect_to($free);
+	hello($f, 'Unit::Slow');
+	my $fid = ask($f, { op => 'new', args => [] })->{id};
+	is(ask($f, { op => 'call', id => $fid, method => 'nap', args => [$limit + 1], want => 'scalar' })->{result}[0], 'rested', 'with call_timeout 0 a slow call is left alone');
+	hit('protocol call: no limit when call_timeout is 0');
+	stop_backend($free);
 };
 
 subtest 'Backend protocol: a failure inside the backend' => sub {

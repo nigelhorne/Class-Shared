@@ -471,7 +471,7 @@ sub _greet {
 		proto => $Class::Shared::PROTOCOL_VERSION,
 		class => $self->{class},
 		pid   => $$,
-	});
+	}, $self->{timeout});
 
 	if (!defined $response) {
 		$self->_close($sock, 'a failed handshake');
@@ -512,6 +512,11 @@ sub _first_exchange_failed {
 		return "$hint (detail: $error)";
 	}
 
+	# A silent backend is more likely busy with another client's method than
+	# in need of a token, and saying so is what lets the person decide to wait.
+	return "$error (the backend may be busy running another client's method; "
+		. 'try again, or raise timeout)' if $error =~ /timed out/;
+
 	return $error if defined $self->{token};
 
 	return "$error (this backend may require a token)";
@@ -520,7 +525,7 @@ sub _first_exchange_failed {
 sub _create_object {
 	my $self = shift;
 
-	my $response = $self->_request({ op => 'new', args => $self->{ctor} });
+	my $response = $self->_request({ op => 'new', args => $self->{ctor} }, $self->{timeout});
 
 	if (!$response->{ok}) {
 		my $error = $response->{error} || 'the backend gave no reason';
@@ -535,14 +540,14 @@ sub _create_object {
 }
 
 sub _request {
-	my ($self, $message) = @_;
+	my ($self, $message, $wait) = @_;
 
 	$message->{id} = $self->{id} if ($message->{op} || '') eq 'call';
 
 	die "Class::Shared: this frontend has no connection to a backend for '$self->{class}'; "
 		. "its object is gone\n" unless $self->{sock};
 
-	my ($response, $error) = $self->_roundtrip($self->{sock}, $message);
+	my ($response, $error) = $self->_roundtrip($self->{sock}, $message, $wait);
 
 	if (!defined $response) {
 		$self->shared_close;
@@ -554,7 +559,7 @@ sub _request {
 }
 
 sub _roundtrip {
-	my ($self, $sock, $message) = @_;
+	my ($self, $sock, $message, $wait) = @_;
 
 	# With a token every frame is signed, and the backend checks the digest
 	# before it thaws: this is what stops the request bytes from being code.
@@ -567,7 +572,7 @@ sub _roundtrip {
 	return (undef, $write_error) unless $ok;
 
 	my ($response, $read_error)
-		= Class::Shared::Protocol::read_frame($sock, undef, $self->{token});
+		= Class::Shared::Protocol::read_frame($sock, $wait, $self->{token});
 	return (undef, $read_error) unless defined $response;
 
 	if (ref($response) ne 'HASH') {
@@ -941,8 +946,12 @@ True by default.  When false, a missing unix backend is an error.
 
 =item timeout
 
-Seconds to wait for a backend that is being started, and for a TCP connect.
-Default 10.  It does not limit how long a method call may take.
+Seconds to wait for a backend that is being started, for a TCP connect, and for
+the backend's answer to the first two requests (the handshake and the request
+for an object).  The backend serves one request at a time, so a backend that is
+busy running another client's method answers late; when it takes longer than
+this, C<new> dies with the reason instead of waiting without end.  Default 10.
+It does not limit how long a later method call may take.
 
 =item log
 
@@ -1505,8 +1514,9 @@ C<shared_call>.
 
 =item C<timeout> does not limit a method call.
 
-It limits starting a backend and making a TCP connection.  A call waits for as
-long as the target takes, and for ever if the backend hangs.
+It limits starting a backend, making a TCP connection, and waiting for the
+answers to the handshake and to the request for an object.  A later call waits
+for as long as the target takes, and for ever if the backend hangs.
 
 =item Do not use one frontend from two processes.
 

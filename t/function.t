@@ -2193,7 +2193,7 @@ subtest 'Class::Shared::Frontend::_create_object' => sub {
 	mock('Class::Shared::Frontend::_request' => sub { shift; @sent = @_; return { ok => 1, id => 17 } });
 	is($frontend->_create_object, $frontend, 'returns the frontend');
 	is($frontend->shared_id, 17, 'the object id is kept');
-	is_deeply(\@sent, [{ op => 'new', args => ['a', 'b'] }], 'the constructor arguments are sent');
+	is_deeply(\@sent, [{ op => 'new', args => ['a', 'b'] }, $frontend->{timeout}], 'the constructor arguments are sent, with the frontend\'s timeout as the wait');
 
 	# A failure ends the connection too: a half-made object is not kept.
 	my $closed = 0;
@@ -4301,6 +4301,55 @@ subtest 'Class::Shared::Backend::_op_call' => sub {
 	is_deeply($call->(method => 'list', want => 'list')->{result}, [1, 2, 3], 'the result list is the caller\'s own');
 
 	memory_cycle_ok($backend, 'the backend and its objects hold no loop');
+};
+
+# ------------------------------------------------------------ _limited, _timed_out
+# _limited is what keeps one call that does not return from holding every
+# client.  Each case checks the result triple, and that no timer or handler is
+# left behind for the next request.
+subtest 'Class::Shared::Backend::_limited and _timed_out' => sub {
+	my $backend = make_backend(call_timeout => 1);
+
+	# A call that returns: ok, no error, no timeout; the timer is off.
+	local $SIG{ALRM} = 'DEFAULT';
+	is_deeply([$backend->_limited(sub { 1 })], [1, '', 0], 'a call that returns');
+	is(alarm(0), 0, 'no timer is left running');
+	is($SIG{ALRM}, 'DEFAULT', 'and the caller\'s handler is back');
+
+	# A call that dies: ok is false, the text is kept, it is not a timeout.
+	is_deeply([$backend->_limited(sub { die "bad\n" })], [0, "bad\n", 0], 'a call that dies');
+	is(alarm(0), 0, 'the timer is off after a die as well');
+
+	# A call that overruns, by sleeping and by looping.
+	my $start = time;
+	my ($ok, $error, $timed_out) = $backend->_limited(sub { select(undef, undef, undef, 10) });
+	is_deeply([$ok, $timed_out], [0, 1], 'a call that sleeps past the limit is stopped');
+	cmp_ok(time - $start, '<=', 3, 'in about the limit');
+	($ok, $error, $timed_out) = $backend->_limited(sub { 1 while 1 });
+	is_deeply([$ok, $timed_out], [0, 1], 'a busy loop is stopped too');
+
+	# A target that catches the exception has still overrun.
+	($ok, $error, $timed_out) = $backend->_limited(sub { eval { select(undef, undef, undef, 10) }; 'carried on' });
+	is_deeply([$ok, $timed_out], [0, 1], 'a call that catches the exception and carries on is still reported as timed out');
+
+	# No limit at all.
+	my $free = make_backend(call_timeout => 0);
+	is_deeply([$free->_limited(sub { select(undef, undef, undef, 1.2); 1 })], [1, '', 0], 'call_timeout 0 sets no timer');
+
+	# $@ of the caller is not used.
+	{
+		local $@ = 'mine';
+		$backend->_limited(sub { die "inner\n" });
+		is($@, 'mine', '$@ is left as the caller had it');
+	}
+
+	# The reply for a stopped call.
+	my $logged;
+	mock('Class::Shared::Backend::_log' => sub { shift; $logged = shift; 1 });
+	my $reply = $backend->_timed_out('inc');
+	restore_all();
+	is_deeply($reply, { ok => 0, kind => 'timeout', error => 'inc took longer than call_timeout (1 seconds) and was stopped' }, 'the reply is kind timeout with the documented text');
+	is($logged, 'inc took longer than call_timeout (1 seconds) and was stopped', 'and the same text is logged');
 };
 
 # ---------------------------------------------------------------------- _op_ping

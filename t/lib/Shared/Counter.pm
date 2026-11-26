@@ -25,6 +25,15 @@ sub tag       { $_[0]->{tag} }
 sub pid       { $_[0]->{pid} }
 sub constructed { $CONSTRUCTED }
 
+# Occupies the backend for a while, as a slow real method would.
+sub sleepy {
+	my ($self, $seconds) = @_;
+
+	select(undef, undef, undef, $seconds);
+
+	return $seconds;
+}
+
 sub inc {
 	my $self = shift;
 	$self->{value} += @_ ? shift : 1;

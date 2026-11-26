@@ -47,7 +47,9 @@ my %config = (
 	other_class  => 'Shared::Tally',
 	start_wait   => 15,        # a backend must answer within this
 	quick        => 5,         # a failure that must not hang must arrive within this
-	short_timeout=> 1,         # the frontend's timeout option where a stall is wanted
+	short_timeout=> 1,
+	call_limit   => 1,         # the backend's call_timeout in the runaway-call test
+	busy_seconds => 4,         # how long the method that keeps a backend busy takes         # the frontend's timeout option where a stall is wanted
 	watchdog     => 240,       # the whole file must end within this
 	token        => 's3cret-token',
 	certs        => File::Spec->catdir('t', 'certs'),
@@ -338,6 +340,74 @@ subtest 'a backend that answers badly or not at all' => sub {
 		kill 'KILL', $pid;
 		waitpid($pid, 0);
 	}
+};
+
+# A backend that is busy running another client's method answers late.  The
+# frontend's timeout covers that wait, so a caller learns what is going on
+# instead of waiting without end.  The busy backend here is a real one.
+subtest 'a busy backend: the handshake gives up after the timeout' => sub {
+	my $dir = private_dir();
+	push @started, $dir;
+
+	my $busy = frontend($dir, ctor => [start => 1]);
+	my $pid = $busy->shared_pid;
+
+	# Another process occupies the backend with a method that takes a while.
+	my $hog = fork() // die "fork: $!";
+	if (!$hog) {
+		eval { $busy->sleepy($config{busy_seconds}) };
+		POSIX::_exit(0);
+	}
+	select(undef, undef, undef, 0.5);
+
+	my $result = outcome(sub { frontend($dir, autostart => 0, timeout => $config{short_timeout}) });
+	like($result->{died}, qr/\AClass::Shared: cannot reach a backend at \S+: handshake failed: timed out waiting for a reply \(the backend may be busy running another client's method; try again, or raise timeout\)\n\z/, 'a frontend that cannot be served in time says the backend is busy');
+	cmp_ok($result->{seconds}, '<', $config{busy_seconds}, '  and gave up before the method ended');
+	is_deeply($result->{warnings}, [], '  without warnings');
+
+	waitpid($hog, 0);
+	my $later = outcome(sub { frontend($dir, autostart => 0, timeout => $config{short_timeout}) });
+	is($later->{died}, '', 'once the method has ended the same call succeeds') or diag $later->{died};
+	$later->{value}->shared_shutdown if $later->{value};
+};
+
+# The backend serves one request at a time, so a call that does not return
+# would hold every client.  call_timeout ends it: one client's slow call is
+# stopped, and the other client, who was waiting behind it, is served.
+subtest 'a runaway call is stopped and does not hold the other clients' => sub {
+	my $dir = private_dir();
+	my $socket = File::Spec->catfile($dir, 'b.sock');
+
+	my $pid = fork() // die "fork: $!";
+	if (!$pid) {
+		eval { Class::Shared::Backend->new(socket => $socket, log => "$socket.log", call_timeout => $config{call_limit})->run };
+		POSIX::_exit(0);
+	}
+	my $until = time + $config{start_wait};
+	select(undef, undef, undef, 0.05) until -S $socket || time > $until;
+
+	my $slow = Class::Shared::Frontend->new($config{class}, socket => $socket, autostart => 0);
+	my $other = Class::Shared::Frontend->new($config{class}, socket => $socket, autostart => 0, ctor => [start => 40]);
+	is($slow->shared_status->{pid}, $pid, 'a backend with a short call_timeout is running');
+
+	my $hog = fork() // die "fork: $!";
+	if (!$hog) {
+		my $answer = eval { $slow->sleepy($config{busy_seconds} * 5); 'finished' } || $@;
+		POSIX::_exit($answer =~ /took longer than call_timeout/ ? 0 : 1);
+	}
+	select(undef, undef, undef, 0.3);
+
+	my $start = time;
+	is($other->value, 40, 'a second client, queued behind the runaway call, is served');
+	cmp_ok(time - $start, '<=', $config{call_limit} + 2, 'once the call has been stopped, and not after it would have finished');
+	waitpid($hog, 0);
+	is($? >> 8, 0, 'the runaway call got the "took longer than call_timeout" error');
+
+	is($slow->inc, 1, 'its object is still there and works');
+	like(slurp("$socket.log"), qr/sleepy took longer than call_timeout \($config{call_limit} seconds\) and was stopped/, 'the log says which call was stopped');
+
+	$other->shared_shutdown;
+	waitpid($pid, 0);
 };
 
 subtest 'a directory that cannot be used' => sub {

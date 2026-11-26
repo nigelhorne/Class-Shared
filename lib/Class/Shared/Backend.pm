@@ -59,6 +59,11 @@ our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
 # taking bytes is not dropped early by the second hand.
 our $WRITE_TIMEOUT = 30;
 
+# How long one call to a target (a method, or its constructor) may run, in
+# seconds.  The backend runs one request at a time, so a call that does not
+# return holds every client; this is what ends it.  0 means no limit.
+our $CALL_TIMEOUT = 60;
+
 # What a connection is told when it asks for an object before naming a class.
 our $NO_CLASS_ERROR = 'this connection named no class in its handshake';
 
@@ -86,6 +91,7 @@ my %OPTION_SCHEMA = (
 	write_timeout     => { type => 'number',  optional => 1, min => 0 },
 	handshake_timeout => { type => 'number',  optional => 1, min => 0 },
 	start_timeout     => { type => 'number',  optional => 1, min => 0 },
+	call_timeout      => { type => 'number',  optional => 1, min => 0 },
 
 	# Not options of the backend: they say where to look for site settings.
 	config_file       => { type => 'string',   optional => 1, min => 1 },
@@ -187,6 +193,7 @@ sub new {
 		write_timeout     => $WRITE_TIMEOUT,
 		handshake_timeout => $HANDSHAKE_TIMEOUT,
 		start_timeout     => $DEFAULT_START_TIMEOUT,
+		call_timeout      => $CALL_TIMEOUT,
 		daemonize         => 0,
 		log               => $control . '.log',
 		%opt,
@@ -220,6 +227,7 @@ sub new {
 		write_timeout     => $set{write_timeout},
 		handshake_timeout => $set{handshake_timeout},
 		start_timeout     => $set{start_timeout},
+		call_timeout      => $set{call_timeout},
 		objects       => {},
 		clients       => {},
 		queued        => 0,
@@ -1112,10 +1120,10 @@ sub _op_new {
 		return _failure('busy', "this backend already holds $held objects, its limit");
 	}
 
-	my $object = eval { $class->new(@{$args}) };
-	if ($@) {
-		return _failure('die', "$@");
-	}
+	my $object;
+	my ($built, $error, $timed_out) = $self->_limited(sub { $object = $class->new(@{$args}) });
+	return $self->_timed_out("$class->new") if $timed_out;
+	return _failure('die', $error) unless $built;
 
 	return _failure('protocol', "$class->new did not return an object") unless ref($object);
 
@@ -1195,7 +1203,7 @@ sub _op_call {
 	}
 
 	my @result;
-	my $ok = eval {
+	my ($ok, $call_error, $call_timed_out) = $self->_limited(sub {
 		if ($want eq 'list') {
 			@result = $object->$method(@{$args});
 		} elsif ($want eq 'void') {
@@ -1205,16 +1213,67 @@ sub _op_call {
 			my $scalar = $object->$method(@{$args});
 			@result = ($scalar);
 		}
-		1;
-	};
+	});
 
-	if (!$ok) {
-		return _failure('die', "$@");
-	}
+	return $self->_timed_out($method) if $call_timed_out;
+	return _failure('die', $call_error) unless $ok;
 
 	$self->{calls}++;
 
 	return { ok => 1, result => [@result] };
+}
+
+# Purpose:       run one call to a target, stopping it if it takes too long.
+# Entry:         $code is a code reference; call_timeout is a number of
+#                seconds, 0 for no limit.
+# Exit status:   ($ok, $error, $timed_out): $ok is true if $code returned;
+#                $error is what it died with; $timed_out is true if the limit
+#                ended it.
+# Side effects:  uses SIGALRM and the process's one alarm timer for the
+#                length of the call, and leaves it off afterwards.
+# Why:           the backend serves one request at a time, so a call that does
+#                not return holds every client.  Perl handles a signal between
+#                two operations, so a call that is inside one long operation
+#                (a system call, a regular expression, an XS function) is
+#                stopped when that operation ends, not before.
+sub _limited {
+	my ($self, $code) = @_;
+
+	my $limit = $self->{call_timeout};
+	my $timed_out = 0;
+	my ($ok, $error);
+
+	{
+		local $@;
+		local $SIG{ALRM} = sub { $timed_out = 1; die "call timed out\n" };
+
+		Time::HiRes::alarm($limit) if $limit;
+
+		# The timer is switched off inside the eval as well, so that it cannot
+		# fire in the gap between the call returning and the line after it.
+		$ok = eval { $code->(); Time::HiRes::alarm(0) if $limit; 1 };
+		$error = "$@";
+
+		Time::HiRes::alarm(0) if $limit;
+	}
+
+	# A target that caught the timeout and carried on has still overrun it.
+	$ok = 0 if $timed_out;
+
+	return ($ok ? 1 : 0, $error, $timed_out);
+}
+
+# Purpose:       the reply, and the log line, for a call that was stopped.
+# Entry:         $what names the call (a method, or CLASS->new).
+# Exit status:   a failure reply of kind 'timeout'.
+# Side effects:  logs one line.
+sub _timed_out {
+	my ($self, $what) = @_;
+
+	my $message = "$what took longer than call_timeout ($self->{call_timeout} seconds) and was stopped";
+	$self->_log($message);
+
+	return _failure('timeout', $message);
 }
 
 sub _op_ping {
@@ -1585,6 +1644,20 @@ Seconds a TCP connection may spend on its TLS handshake before it is dropped
 and its slot freed.  Default 5.  Nothing else is bounded by it: a client that
 has finished its handshake may sit idle for as long as it likes.
 
+=item call_timeout
+
+Seconds one call to a target (a method, or the target's C<new>) may run before
+the backend stops it and answers with the C<timeout> kind.  Default 60.  0 means
+no limit.  The backend serves one request at a time, so a call that never
+returns would hold every client; this bound is what ends it.  The call is
+stopped with an exception raised at the next point where Perl can run it, which
+is between two operations: a call that is inside one long operation (a system
+call, a long regular expression, an XS function) is stopped when that operation
+ends.  The target's object is not repaired or removed: it may have been left half
+changed, and a later call on it sees it so.  A target that sets its own
+C<alarm> or C<$SIG{ALRM}>, or that catches the exception and carries on, defeats
+the limit; the call is still reported as timed out when it returns.
+
 =item config_file
 
 The path of a configuration file to read site settings from.  It is not an
@@ -1690,6 +1763,7 @@ variable such as C<$Class::Shared::Backend::WRITE_TIMEOUT> before it does.
         write_timeout     => { type => 'number',  optional => 1, min => 0 },
         handshake_timeout => { type => 'number',  optional => 1, min => 0 },
         start_timeout     => { type => 'number',  optional => 1, min => 0 },
+        call_timeout      => { type => 'number',  optional => 1, min => 0 },
         config_file       => { type => 'string',   optional => 1, min => 1 },
         config_dirs       => { type => 'arrayref', optional => 1 },
     }
@@ -2297,6 +2371,11 @@ The target's C<new> or method died; C<error> is its message.
 =item unknown_object
 
 No such object (it may have been released).
+
+=item timeout
+
+The call ran for longer than C<call_timeout> and was stopped; C<error> says which
+call.  The object is still there.
 
 =item unknown_method
 
