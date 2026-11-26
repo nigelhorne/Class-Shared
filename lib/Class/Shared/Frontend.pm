@@ -221,6 +221,8 @@ sub DESTROY {
 # other clients' objects, so it is an administrative operation, not something
 # a normal client does.
 sub shared_shutdown {
+	# Evals below must not leave their errors in the caller's $@.
+	local $@;
 	my $self = shift;
 
 	return 0 unless $self->{sock};
@@ -261,6 +263,8 @@ sub AUTOLOAD {
 # can() and isa() are inherited from UNIVERSAL, which would answer for the
 # frontend rather than for the class it stands in for, so both are overridden.
 sub can {
+	# Evals below must not leave their errors in the caller's $@.
+	local $@;
 	my ($self, $method) = @_;
 
 	return UNIVERSAL::can($self, $method) unless ref $self;
@@ -292,6 +296,8 @@ sub can {
 }
 
 sub isa {
+	# Evals below must not leave their errors in the caller's $@.
+	local $@;
 	my ($self, $class) = @_;
 
 	return UNIVERSAL::isa($self, $class) unless ref $self;
@@ -518,6 +524,7 @@ sub _create_object {
 
 	if (!$response->{ok}) {
 		my $error = $response->{error} || 'the backend gave no reason';
+		$error =~ s/\s+\z//;
 		$self->shared_close;
 		die "Class::Shared: could not construct $self->{class}: $error\n";
 	}
@@ -588,6 +595,8 @@ sub _close {
 }
 
 sub _spawn_backend {
+	# Evals below must not leave their errors in the caller's $@.
+	local $@;
 	my $self = shift;
 
 	my $path = $self->{socket_path};

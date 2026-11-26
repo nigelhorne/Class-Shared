@@ -305,6 +305,8 @@ sub _options {
 #                dies with a message in this module's usual form if not.
 # Side effects:  none.
 sub _validate {
+	# Evals below must not leave their errors in the caller's $@.
+	local $@;
 	my ($input, $source) = @_;
 
 	my $valid = eval {

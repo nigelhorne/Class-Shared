@@ -2,6 +2,13 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - t/unit.t: black-box tests of every documented function, message and
+          return state, with a ledger that fails if a documented state was not
+          triggered.  It found that the Protocol functions (encode_frame,
+          take_payload) and the Frontend (shared_shutdown, can, isa and the
+          automatic start) overwrote the caller's $@; each now localises it.
+          A constructor error that already ended in a new line no longer gets
+          a second one in "could not construct CLASS".
         - The frontend no longer loads IO::Socket::UNIX (and with it IO::Socket,
           IO::Socket::INET and IO::Handle): a client process is about 1.1 MB
           smaller and loads a few milliseconds faster.

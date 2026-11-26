@@ -21,6 +21,8 @@ our $DIGEST_SIZE = 32;
 sub encode_frame {
 	my ($message, $secret) = @_;
 
+	# The caller's $@ is theirs: this eval must not leave a trace in it.
+	local $@;
 	my $frozen = eval { Storable::nfreeze($message) };
 	if (!defined $frozen) {
 		my $error = $@ || 'unknown error';
@@ -44,6 +46,7 @@ sub encode_frame {
 sub take_payload {
 	my ($body) = @_;
 
+	local $@;
 	my $message = eval { Storable::thaw($body) };
 	if ($@) {
 		my $error = $@;

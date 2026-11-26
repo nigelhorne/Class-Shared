@@ -396,6 +396,11 @@ boundary.
 **Side effects:** reads the environment and checks whether directories exist.  It
 does not create anything; use ["ensure\_dir"](#ensure_dir) for that.
 
+**Dies** if the directory name contains a NUL byte, which would end the name
+early in a system call and so name a different place.  Under taint mode
+(`-T`) the name is untainted here, because everything made in it is checked by
+["ensure\_dir"](#ensure_dir) before it is trusted.
+
 #### Api Specification
 
 ##### Input
