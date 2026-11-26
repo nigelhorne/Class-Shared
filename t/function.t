@@ -1164,7 +1164,7 @@ subtest 'Class::Shared::Protocol::take_frame' => sub {
 	mock('Class::Shared::Protocol::_decode' => sub { @decoded = @_; return ('msg', undef) });
 	$buffer = pack('N', 3) . 'abc';
 	@r = Class::Shared::Protocol::take_frame(\$buffer, 'key');
-	is_deeply([@r, @decoded], [1, 'msg', undef, 'abc', 'key'], '_decode is given the payload and the secret');
+	is_deeply([@r, @decoded], [1, 'msg', undef, 'abc', 'key', undef], '_decode is given the payload, the secret and no check');
 	restore_all();
 
 	ok(leaves_topic_alone(sub { my $b = $frame; Class::Shared::Protocol::take_frame(\$b) }), '$_ is left alone');
@@ -4325,7 +4325,8 @@ subtest 'Class::Shared::Backend::_limited and _timed_out' => sub {
 	my ($ok, $error, $timed_out) = $backend->_limited(sub { select(undef, undef, undef, 10) });
 	is_deeply([$ok, $timed_out], [0, 1], 'a call that sleeps past the limit is stopped');
 	cmp_ok(time - $start, '<=', 3, 'in about the limit');
-	($ok, $error, $timed_out) = $backend->_limited(sub { 1 while 1 });
+	# Bounded, so that a broken limit fails the test instead of spinning for ever.
+	($ok, $error, $timed_out) = $backend->_limited(sub { my $end = time + 10; 1 while time < $end });
 	is_deeply([$ok, $timed_out], [0, 1], 'a busy loop is stopped too');
 
 	# A target that catches the exception has still overrun.

@@ -9,6 +9,7 @@ use File::Spec ();
 use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Socket qw(SOCK_STREAM);
+use Storable ();
 use Time::HiRes ();
 
 use Log::Abstraction ();
@@ -59,6 +60,21 @@ our $MAX_QUEUED = $Class::Shared::Protocol::MAX_FRAME + 4096;
 # taking bytes is not dropped early by the second hand.
 our $WRITE_TIMEOUT = 30;
 
+# A request that has only partly arrived is held in memory until the rest
+# does.  max_queued_total bounds replies; these two bound requests.  Without
+# them every client could send nearly a whole maximum-size frame, stop, and
+# leave the backend holding max_clients times that for as long as it liked.
+our $MAX_BUFFERED_TOTAL = 4 * ($Class::Shared::Protocol::MAX_FRAME + 4096);
+our $READ_TIMEOUT = 30;
+
+# A request no longer than this is thawed straight away.  Each level of nesting
+# takes at least one byte, and this many levels fit easily on any C stack; a
+# longer request is first tried in a child process.
+our $THAW_UNCHECKED = 4096;
+
+# The most seconds that trial may take.
+our $THAW_TRIAL_TIMEOUT = 30;
+
 # How long, in seconds, the listener is left alone after accept() failed for
 # want of file descriptors or memory.
 our $ACCEPT_PAUSE = 0.1;
@@ -96,6 +112,8 @@ my %OPTION_SCHEMA = (
 	handshake_timeout => { type => 'number',  optional => 1, min => 0 },
 	start_timeout     => { type => 'number',  optional => 1, min => 0 },
 	call_timeout      => { type => 'number',  optional => 1, min => 0 },
+	read_timeout      => { type => 'number',  optional => 1, min => 0 },
+	max_buffered_total => { type => 'integer', optional => 1, min => 1 },
 
 	# Not options of the backend: they say where to look for site settings.
 	config_file       => { type => 'string',   optional => 1, min => 1 },
@@ -198,6 +216,8 @@ sub new {
 		handshake_timeout => $HANDSHAKE_TIMEOUT,
 		start_timeout     => $DEFAULT_START_TIMEOUT,
 		call_timeout      => $CALL_TIMEOUT,
+		read_timeout      => $READ_TIMEOUT,
+		max_buffered_total => $MAX_BUFFERED_TOTAL,
 		daemonize         => 0,
 		log               => $control . '.log',
 		%opt,
@@ -232,6 +252,8 @@ sub new {
 		handshake_timeout => $set{handshake_timeout},
 		start_timeout     => $set{start_timeout},
 		call_timeout      => $set{call_timeout},
+		read_timeout      => $set{read_timeout},
+		max_buffered_total => $set{max_buffered_total},
 		objects       => {},
 		clients       => {},
 		queued        => 0,
@@ -605,6 +627,18 @@ sub _loop {
 		# now and then: a peer that never speaks, or one that never reads, would
 		# otherwise keep select asleep past the deadline it is on.
 		my $timeout = $handshaking ? $HANDSHAKE_POLL : undef;
+		my $read_deadline;
+		for my $client (values %{$self->{clients}}) {
+			next unless defined $client->{partial_progress};
+			my $deadline = $client->{partial_progress} + $self->{read_timeout};
+			$read_deadline = $deadline
+				if !defined $read_deadline || $deadline < $read_deadline;
+		}
+		if (defined $read_deadline) {
+			my $wait = $read_deadline - Time::HiRes::time();
+			$wait = 0 if $wait < 0;
+			$timeout = $wait if !defined $timeout || $wait < $timeout;
+		}
 		if (defined $write_deadline) {
 			my $wait = $write_deadline - Time::HiRes::time();
 			$wait = 0 if $wait < 0;
@@ -628,6 +662,8 @@ sub _loop {
 
 		$self->_expire_handshakes if $handshaking;
 		$self->_expire_writes if defined $write_deadline;
+		$self->_expire_reads(defined $ready && $ready > 0 ? $rout : '')
+			if defined $read_deadline;
 
 		next if !defined $ready || $ready <= 0;
 
@@ -674,6 +710,68 @@ sub _expire_handshakes {
 		next if $client->{deadline} > $now;
 
 		$self->_drop_client($client, 'TLS handshake timed out');
+	}
+
+	return 1;
+}
+
+# Purpose:       keep count of what a client has half sent, and bound the total.
+# Entry:         $client has just been read from; $completed is how many whole
+#                frames that read finished.
+# Exit status:   1.
+# Side effects:  releases an emptied buffer; while the half-sent frames of all
+#                clients add up to more than max_buffered_total, drops the
+#                client whose frame has been arriving the longest.
+# Why:           the oldest is the one to go because a client that is hoarding
+#                memory has an old frame, and an honest large request a new one.
+sub _account_inbound {
+	my ($self, $client, $completed) = @_;
+
+	if (!length $client->{buffer}) {
+		# Emptying a string keeps its memory, and a frame can be 64 MiB.
+		undef $client->{buffer};
+		$client->{buffer} = '';
+		delete @{$client}{qw(partial_started partial_progress)};
+		return 1;
+	}
+
+	my $now = Time::HiRes::time();
+	delete $client->{partial_started} if $completed;
+	$client->{partial_started} //= $now;
+	$client->{partial_progress} = $now;
+
+	my @partial = grep { length($_->{buffer} // '') } values %{$self->{clients}};
+	my $total = 0;
+	$total += length $_->{buffer} for @partial;
+
+	for my $oldest (sort { ($a->{partial_started} // $now) <=> ($b->{partial_started} // $now) } @partial) {
+		last if $total <= $self->{max_buffered_total};
+
+		my $held = length $oldest->{buffer};
+		$total -= $held;
+		$self->_drop_client($oldest, "half-received requests add up to more than the "
+			. "$self->{max_buffered_total} bytes the backend may hold; this one held $held");
+	}
+
+	return 1;
+}
+
+# Drop connections whose half-sent request has stopped arriving.  One that has
+# bytes waiting to be read ($readable) is left alone: the backend may only just
+# have come back from a long call, and those bytes are its progress.
+sub _expire_reads {
+	my ($self, $readable) = @_;
+
+	my $now = Time::HiRes::time();
+
+	for my $client (values %{$self->{clients}}) {
+		next if $client->{closed};
+		next unless defined $client->{partial_progress};
+		next if $client->{partial_progress} + $self->{read_timeout} > $now;
+		next if length $readable && vec($readable, fileno($client->{fh}), 1);
+
+		$self->_drop_client($client, 'a request of which ' . length($client->{buffer})
+			. " bytes had arrived made no progress for $self->{read_timeout} second(s)");
 	}
 
 	return 1;
@@ -874,17 +972,21 @@ sub _serve_client {
 	}
 
 	$client->{buffer} .= $chunk;
+	my $completed = 0;
 
 	while (1) {
 		# With a token, take_frame checks the frame's digest before it
 		# thaws anything, so an unauthenticated peer never gets as far as
 		# Storable.
 		my ($status, $message, $protocol_error)
-			= Class::Shared::Protocol::take_frame(\$client->{buffer}, $self->{token});
+			= Class::Shared::Protocol::take_frame(\$client->{buffer}, $self->{token},
+				sub { $self->_survives_thaw($_[0]) });
 
 		if ($status == 0) {
 			last;
 		}
+
+		$completed++ if $status > 0;
 
 		if ($status < 0) {
 			$self->_send($client, _failure('protocol', $protocol_error));
@@ -906,7 +1008,58 @@ sub _serve_client {
 		last if $self->{stop};
 	}
 
+	$self->_account_inbound($client, $completed) unless $client->{closed};
+
 	return 1;
+}
+
+# Purpose:       say whether a request can be thawed without killing us.
+# Entry:         $body is an authenticated Storable image.
+# Exit status:   1 if it is safe to thaw here, 0 if not.
+# Side effects:  for a body over $THAW_UNCHECKED bytes, forks and waits.
+# Why:           Storable::thaw calls itself for each level of nesting and has
+#                no limit it can be relied on to apply, so a few hundred
+#                kilobytes of nested arrays overflow the C stack.  That is a
+#                segmentation fault, which eval cannot catch, and every shared
+#                object would be lost with the process.  A child with the same
+#                stack finds out first.  An ordinary failure to thaw is not its
+#                business: only the child dying is.
+sub _survives_thaw {
+	my ($self, $body) = @_;
+
+	return 1 if length($body) <= $THAW_UNCHECKED;
+
+	require POSIX;
+	local ($!, $?, $@);
+	local $SIG{CHLD} = 'DEFAULT';
+
+	my $pid = fork;
+	if (!defined $pid) {
+		$self->_log("refused a request: cannot fork to check it: $!", 'warn');
+		return 0;
+	}
+
+	if (!$pid) {
+		local $SIG{ALRM} = 'DEFAULT';
+		local $SIG{SEGV} = 'DEFAULT';
+		alarm $THAW_TRIAL_TIMEOUT;
+
+		# A hostile request must not be able to fill the disk with core
+		# files, each as large as the backend.
+		if (open(my $filter, '>', '/proc/self/coredump_filter')) {
+			print {$filter} '0';
+			close($filter);
+		}
+		chdir('/');
+
+		# Held until the exit, so that no DESTROY runs in this copy.
+		my $held = eval { Storable::thaw($body) };
+		POSIX::_exit(0);
+	}
+
+	1 while waitpid($pid, 0) == -1 && $!{EINTR};
+
+	return $? == 0 ? 1 : 0;
 }
 
 # The connection owns its objects: when it goes, they go, and the target's
@@ -926,6 +1079,9 @@ sub _drop_client {
 	$client->{closed} = 1;
 	$client->{outbuf} = '';
 	$client->{stalled_since} = undef;
+	undef $client->{buffer};
+	$client->{buffer} = '';
+	delete @{$client}{qw(partial_started partial_progress)};
 
 	my $owned = $client->{objects} || {};
 	for my $id (keys %{$owned}) {
@@ -1038,6 +1194,12 @@ sub _flush {
 	# to wait for.  _send started it when it made the queue; _expire_writes only
 	# reads it; those two lines and this one are the whole of the rule.
 	$client->{stalled_since} = length $client->{outbuf} ? Time::HiRes::time() : undef;
+
+	# As for requests: an emptied queue should not keep a large reply's memory.
+	if (!length $client->{outbuf}) {
+		undef $client->{outbuf};
+		$client->{outbuf} = '';
+	}
 
 	# Anything still queued puts the fd back in the loop's writable set.
 	return;
@@ -1659,6 +1821,21 @@ client that keeps taking bytes is not dropped, however long the whole reply
 takes; one that takes nothing at all loses its connection, its queued reply and
 its objects.
 
+=item max_buffered_total
+
+The most bytes of half-received requests the backend holds, over all clients.
+Default four times the largest frame (about 256 MiB).  A request that has only
+partly arrived is kept until the rest does; when these add up to more than this,
+the connection whose request has been arriving the longest is dropped, and its
+objects with it, until they fit.  Set it no lower than the largest request you
+expect.
+
+=item read_timeout
+
+Seconds a half-received request may go without another byte arriving before the
+connection is dropped.  Default 30.  A client that is idle between requests is
+not affected, however long it waits.
+
 =item start_timeout
 
 Seconds to wait for another backend that is shutting down to release its lock.
@@ -1790,6 +1967,8 @@ variable such as C<$Class::Shared::Backend::WRITE_TIMEOUT> before it does.
         handshake_timeout => { type => 'number',  optional => 1, min => 0 },
         start_timeout     => { type => 'number',  optional => 1, min => 0 },
         call_timeout      => { type => 'number',  optional => 1, min => 0 },
+        read_timeout      => { type => 'number',  optional => 1, min => 0 },
+        max_buffered_total => { type => 'integer', optional => 1, min => 1 },
         config_file       => { type => 'string',   optional => 1, min => 1 },
         config_dirs       => { type => 'arrayref', optional => 1 },
     }
@@ -2500,6 +2679,12 @@ its slot freed, while every client already connected keeps being served in the
 meantime.  Doing the handshake in C<accept> would let
 anyone who can reach the port freeze the backend for the length of the timeout,
 and the loop is single-threaded, so that would be every client.
+
+Data nested many thousands of levels deep cannot be read by L<Storable> without
+crashing the process.  The backend therefore first reads any request over 4096
+bytes in a child process, and refuses the request, and drops its connection, if
+the child dies.  This costs one C<fork> for each large request, and a class with
+a C<STORABLE_thaw> hook sees that hook run in the child as well.
 
 =head1 ENCODING
 

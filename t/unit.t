@@ -248,6 +248,7 @@ my %LEDGER = map { $_ => 1 } (
 	'protocol new: timeout',
 	'protocol call: timeout',
 	'protocol call: no limit when call_timeout is 0',
+	'Backend new: read_timeout and max_buffered_total',
 	'Backend new: call_timeout default and range',
 	'protocol call: result list',
 	'protocol call: die',
@@ -1451,7 +1452,7 @@ CLASS
 package Unit::Slow;
 sub new { my ($class, %a) = @_; select(undef, undef, undef, $a{pause}) if $a{pause}; return bless {n => 0}, $class }
 sub nap { select(undef, undef, undef, $_[1]); return 'rested' }
-sub spin { 1 while 1 }
+sub spin { my $end = time + 30; 1 while time < $end; return 'gave up' }
 sub count { return ++$_[0]{n} }
 1;
 CLASS
@@ -1910,6 +1911,12 @@ subtest 'Backend protocol: call_timeout' => sub {
 	is($Class::Shared::Backend::CALL_TIMEOUT, 60, 'the default is the documented 60 seconds');
 	lives_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', call_timeout => 0) } 'call_timeout 0 (no limit) is accepted';
 	hit('Backend new: call_timeout default and range');
+
+	is($Class::Shared::Backend::READ_TIMEOUT, 30, 'read_timeout: the documented default of 30 seconds');
+	is($Class::Shared::Backend::MAX_BUFFERED_TOTAL, 4 * ($config{max_frame} + 4096), 'max_buffered_total: four times the largest frame');
+	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', read_timeout => -1) } qr/an argument is not valid/, 'read_timeout may not be negative';
+	throws_ok { Class::Shared::Backend->new(socket => '/tmp/x.sock', max_buffered_total => 0) } qr/an argument is not valid/, 'max_buffered_total must be at least 1';
+	hit('Backend new: read_timeout and max_buffered_total');
 
 	my $limit = 1;
 	my $b = start_backend(call_timeout => $limit);

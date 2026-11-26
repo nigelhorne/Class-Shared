@@ -18,8 +18,18 @@ our $MAX_FRAME = 64 * 1024 * 1024;
 # run -- code of its choosing.
 our $DIGEST_SIZE = 32;
 
+# Storable before 3.05 (perl 5.26 ships 2.62) has no recursion limit: freezing
+# data nested some tens of thousands deep overflows the C stack and kills the
+# process, which no eval can catch.  There, and only there, the depth is
+# checked first.
+our $MAX_DEPTH = 10_000;
+our $CHECK_DEPTH = !eval { Storable->VERSION('3.05'); 1 };
+
 sub encode_frame {
 	my ($message, $secret) = @_;
+
+	return (undef, "cannot serialise message: it is nested more than $MAX_DEPTH deep")
+		if $CHECK_DEPTH && _too_deep($message);
 
 	# The caller's $@ is theirs: this eval must not leave a trace in it.
 	local $@;
@@ -158,7 +168,7 @@ sub _read_exact {
 #         ( 0, undef,    undef) when more bytes are needed,
 #         (-1, undef,    $error) when the stream is unusable.
 sub take_frame {
-	my ($buffer_ref, $secret) = @_;
+	my ($buffer_ref, $secret, $check) = @_;
 
 	return (0, undef, undef) if length($$buffer_ref) < 4;
 
@@ -173,17 +183,46 @@ sub take_frame {
 	my $payload = substr($$buffer_ref, 4, $length);
 	substr($$buffer_ref, 0, 4 + $length) = '';
 
-	my ($message, $error) = _decode($payload, $secret);
+	my ($message, $error) = _decode($payload, $secret, $check);
 	return (-1, undef, $error) if defined $error;
 
 	return (1, $message, undef);
+}
+
+# Purpose:       say whether data is nested more than $MAX_DEPTH deep.
+# Entry:         $data is anything.
+# Exit status:   1 if it is, 0 if not.
+# Side effects:  none.  It keeps its own list of what is left to visit rather
+#                than calling itself, and visits each thing once, so cycles
+#                end.
+sub _too_deep {
+	my @todo = ([$_[0], 0]);
+	my %seen;
+
+	while (@todo) {
+		my ($item, $depth) = @{ pop @todo };
+
+		my $type = Scalar::Util::reftype($item) or next;
+		next if $seen{ Scalar::Util::refaddr($item) }++;
+		return 1 if ++$depth > $MAX_DEPTH;
+
+		if ($type eq 'ARRAY') {
+			push @todo, map { [$_, $depth] } grep { ref } @{$item};
+		} elsif ($type eq 'HASH') {
+			push @todo, map { [$_, $depth] } grep { ref } values %{$item};
+		} elsif ($type eq 'REF') {
+			push @todo, [${$item}, $depth];
+		}
+	}
+
+	return 0;
 }
 
 # Payload to message.  With a secret the digest is checked first, and the body
 # is not handed to Storable unless it matches: thaw() runs whatever the sender
 # put in the image, so the authentication has to happen before it, not after.
 sub _decode {
-	my ($payload, $secret) = @_;
+	my ($payload, $secret, $check) = @_;
 
 	my $body = $payload;
 
@@ -197,6 +236,9 @@ sub _decode {
 		return (undef, 'frame failed authentication')
 			unless _authentic($secret, $body, $digest);
 	}
+
+	return (undef, 'cannot deserialise message: reading it would crash the process')
+		if $check && !$check->($body);
 
 	return take_payload($body);
 }
@@ -482,6 +524,11 @@ data is not a valid image.  A frame that fails its digest is discarded without
 being thawed.  Close the connection.
 
 =back
+
+A third argument, C<$check>, may be a code reference.  It is called with the
+serialised message, after the digest has been checked and before the message is
+thawed; if it returns false the frame is refused with C<cannot deserialise
+message: reading it would crash the process>.
 
 B<Side effects:> removes the bytes of one complete frame from C<$buffer>.
 

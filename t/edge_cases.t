@@ -15,10 +15,33 @@
 # code under test calls the core time(), so it cannot move that clock.  Time
 # limits are tested with short real timeouts instead.
 #
+# SAFETY: these tests attack the code with endless files and huge inputs, so a
+# fault in the code must not be able to take the machine with it.  The file
+# starts itself again under hard limits on memory, processor time and file
+# size, which every child inherits.  A Perl alarm cannot do this job: it is not
+# delivered while one long operation (a read, a regular expression) runs.
+#
 # Set TEST_VERBOSE=1 to see the state the subtests print with diag.
 
 use strict;
 use warnings;
+
+BEGIN {
+	# KiB of memory, seconds of processor time, 512-byte blocks per file.
+	my %cap = (memory => 1_048_576, cpu => 120, file => 204_800);
+
+	if (!$ENV{EDGE_CASES_STARTED} && -x '/bin/sh') {
+		local $ENV{EDGE_CASES_STARTED} = 1;
+
+		# EDGE_CASES_CAPPED says the memory limit really took effect; where it
+		# cannot be set, the endless-input tests are skipped.
+		exec('/bin/sh', '-c',
+			"ulimit -v $cap{memory} 2>/dev/null && EDGE_CASES_CAPPED=1 && export EDGE_CASES_CAPPED; "
+			. "ulimit -t $cap{cpu} 2>/dev/null; ulimit -f $cap{file} 2>/dev/null; "
+			. 'exec "$0" "$@"',
+			$^X, (map { "-I$_" } grep { !ref } @INC), $0, @ARGV);
+	}
+}
 
 use Test::Most;
 
@@ -130,6 +153,7 @@ sub start_backend {
 	my $pid = fork() // die "fork: $!";
 	if (!$pid) {
 		$setup->() if $setup;
+		$SIG{INT} = $SIG{TERM} = 'DEFAULT';
 		eval { Class::Shared::Backend->new(socket => $b->{socket}, log => $b->{log}, %option)->run };
 		POSIX::_exit(0);
 	}
@@ -143,13 +167,24 @@ sub start_backend {
 	return $b;
 }
 
+# Every backend is ended, whatever happens: asked first, then killed, so that
+# neither a stuck one nor an interrupted run leaves processes behind.
+my $test_pid = $$;
+
 END {
 	local $?;
-	foreach my $b (@backends) {
-		kill 'TERM', $b->{pid};
-		waitpid($b->{pid}, 0);
+	if (defined $test_pid && $$ == $test_pid) {
+		kill 'TERM', map { $_->{pid} } @backends if @backends;
+		foreach my $b (@backends) {
+			my $until = time + 3;
+			select(undef, undef, undef, 0.05) while !waitpid($b->{pid}, POSIX::WNOHANG()) && time < $until;
+			kill 'KILL', $b->{pid};
+			waitpid($b->{pid}, 0);
+		}
 	}
 }
+
+$SIG{INT} = $SIG{TERM} = sub { exit 1 };
 
 sub connect_to {
 	my ($b) = @_;
@@ -176,6 +211,14 @@ sub alive {
 	my $sock = connect_to($b) or return 0;
 	my $r = ask($sock, { op => 'hello', proto => $config{protocol} });
 	return $r->{ok} ? 1 : 0;
+}
+
+# A backend the frontend started is not our child; end it when the subtest does,
+# however the subtest ends.
+{
+	package Unit::KillOnExit;
+	sub new { my ($class, $pid) = @_; return bless { pid => $pid, owner => $$ }, $class }
+	sub DESTROY { my $self = shift; kill 'TERM', $self->{pid} if $$ == $self->{owner} && $self->{pid} }
 }
 
 # ===========================================================================
@@ -265,10 +308,15 @@ subtest 'read_secret against hostile files' => sub {
 	# Special files.  /dev/zero and /dev/urandom never end: reading one whole
 	# would use all memory, so the size of a secret is bounded.
 	throws_ok { Class::Shared::read_secret('/dev/null') } qr/is empty/, '/dev/null is empty';
-	foreach my $device (grep { -c $_ } '/dev/zero', '/dev/urandom') {
-		my $r = outcome(sub { Class::Shared::read_secret($device) });
-		like($r->{died}, qr/\AClass::Shared: \Q$device\E is too large to be a secret \(more than 65536 bytes\)\n\z/, "$device is refused");
-		cmp_ok($r->{seconds}, '<', $config{quick}, '  quickly');
+	SKIP: {
+		# Never without a memory limit: a fault here would otherwise fill
+		# memory and swap.
+		skip 'no memory limit could be set, so endless files are not read', 4 unless $ENV{EDGE_CASES_CAPPED};
+		foreach my $device (grep { -c $_ } '/dev/zero', '/dev/urandom') {
+			my $r = outcome(sub { Class::Shared::read_secret($device) });
+			like($r->{died}, qr/\AClass::Shared: \Q$device\E is too large to be a secret \(more than 65536 bytes\)\n\z/, "$device is refused");
+			cmp_ok($r->{seconds}, '<', $config{quick}, '  quickly');
+		}
 	}
 	my $big = write_file(File::Spec->catfile($dir, 'big'), 'x' x 65_537);
 	throws_ok { Class::Shared::read_secret($big) } qr/is too large to be a secret/, 'one byte over the limit';
@@ -567,6 +615,8 @@ subtest 'the frontend refuses hostile options and arguments' => sub {
 	my $evil = File::Spec->catdir(private_dir(), q{a b;touch PWNED3 $(id)});
 	mkdir $evil, 0700 or die "mkdir: $!";
 	my $frontend = Class::Shared::Frontend->new($config{class}, dir => $evil, ctor => [start => 1]);
+	my $started_pid = $frontend->shared_pid;
+	my $guard = Unit::KillOnExit->new($started_pid);
 	is($frontend->inc, 2, 'a backend starts in a directory with hostile characters in its name');
 	ok(!-e 'PWNED3' && !-e File::Spec->catfile($evil, 'PWNED3'), 'and no command in the name was run');
 
@@ -716,6 +766,102 @@ subtest 'limits hold: objects, clients, frames and nesting' => sub {
 	@held = ();
 	select(undef, undef, undef, 0.3);
 	ok(alive($b), 'and a place is free again once a client leaves');
+};
+
+# Memory held for requests that are only partly sent.  Without a bound, every
+# client could send nearly a whole 64 MiB frame, stop, and leave the backend
+# holding max_clients of them.  The amounts here are small enough to be safe
+# even if the bound did not work.
+subtest 'half-sent requests cannot fill the backend\'s memory' => sub {
+	local $SIG{PIPE} = 'IGNORE';
+	my $mib = 1024 * 1024;
+	my $limit = 8 * $mib;
+	my $b = start_backend(max_buffered_total => $limit, read_timeout => 60);
+
+	my $resident = sub { slurp("/proc/$b->{pid}/status") =~ /^VmRSS:\s+(\d+)/m ? $1 * 1024 : undef };
+	my $good = greeted($b);
+	my $before = $resident->();
+
+	# 40 clients each send 4 MiB of an 8 MiB request: 160 MiB offered.
+	my @hoarders;
+	my $sent = outcome(sub {
+		for (1 .. 40) {
+			my $sock = connect_to($b) or die "connect: $!";
+			Class::Shared::Protocol::write_all($sock, pack('N', 8 * $mib) . ('x' x (4 * $mib)));
+			push @hoarders, $sock;
+		}
+		return 1;
+	}, 60);
+	is($sent->{died}, '', 'the hoarding clients sent what they could') or diag $sent->{died};
+	select(undef, undef, undef, 0.5);
+
+	SKIP: {
+		skip 'needs /proc/PID/status', 1 unless defined $before;
+		my $grown = $resident->() - $before;
+		state_of("backend grew by $grown bytes");
+		cmp_ok($grown, '<', 6 * $limit, 'the backend holds about the limit, not the 160 MiB offered');
+	}
+	ok(ask($good, { op => 'ping' })->{ok}, 'an ordinary client is still served');
+	like(slurp($b->{log}), qr/half-received requests add up to more than the $limit bytes/, 'the log says why clients were dropped');
+
+	# The oldest half-sent request is the one given up.
+	my $oldest = $hoarders[0];
+	$oldest->blocking(0);
+	is(sysread($oldest, my $byte, 1), 0, 'the client that had been hoarding longest was dropped');
+	my $newest = $hoarders[-1];
+	$newest->blocking(0);
+	ok(!defined sysread($newest, $byte, 1), 'the newest is still connected');
+	@hoarders = ();
+
+	# A request that stops arriving is given up after read_timeout; an idle
+	# client with nothing half sent is not.
+	my $quick = start_backend(read_timeout => 1);
+	my $idle = greeted($quick);
+	my $stalled = greeted($quick);
+	syswrite($stalled, pack('N', 1000) . 'partial');
+
+	my $slow = connect_to($quick);
+	my ($frame) = Class::Shared::Protocol::encode_frame({ op => 'ping' });
+	my ($greeting) = Class::Shared::Protocol::encode_frame({ op => 'hello', proto => $config{protocol} });
+	Class::Shared::Protocol::write_all($slow, $greeting);
+	Class::Shared::Protocol::read_frame($slow, $config{quick});
+	for my $piece ($frame =~ /.{1,8}/gs) {
+		syswrite($slow, $piece);
+		select(undef, undef, undef, 0.4);
+	}
+	my ($reply) = Class::Shared::Protocol::read_frame($slow, $config{quick});
+	ok($reply && $reply->{ok}, 'a slow request that keeps arriving is served');
+
+	select(undef, undef, undef, 1.5);
+	$stalled->blocking(0);
+	is(sysread($stalled, my $nothing, 1), 0, 'a request that stopped arriving is dropped');
+	ok(ask($idle, { op => 'ping' })->{ok}, 'an idle client is kept');
+	like(slurp($quick->{log}), qr/a request of which 11 bytes had arrived made no progress for 1 second/, 'and the log says why');
+};
+
+# A frame of a few hundred kilobytes holding data nested 100000 deep makes
+# Storable::thaw overflow the C stack.  The image is built by hand, as a
+# hostile client would, because freeze will not make it.
+subtest 'a deeply nested request cannot crash the backend' => sub {
+	my $b = start_backend();
+	my $good = greeted($b);
+	my $id = ask($good, { op => 'new', args => [start => 7] })->{id};
+
+	my $image = substr(Storable::nfreeze([]), 0, 2) . "\x02\0\0\0\x01"
+		. ("\x04\x02\0\0\0\x01" x $config{deep}) . "\x04\x02\0\0\0\0";
+
+	local $SIG{PIPE} = 'IGNORE';
+	my $hostile = greeted($b);
+	Class::Shared::Protocol::write_all($hostile, pack('N', length $image) . $image);
+	my ($reply) = Class::Shared::Protocol::read_frame($hostile, $config{quick} * 4);
+	is_deeply([@{ $reply || {} }{qw(ok kind error)}], [0, 'protocol', 'cannot deserialise message: reading it would crash the process'], 'the request is refused with an explanation');
+
+	is(kill(0, $b->{pid}), 1, 'the backend is still running');
+	is(ask($good, { op => 'call', id => $id, method => 'value', args => [], want => 'scalar' })->{result}[0], 7, 'and the shared objects are still there');
+
+	# An ordinary large request is still served.
+	my $large = ask($good, { op => 'call', id => $id, method => 'echo_list', args => ['y' x 200_000], want => 'list' });
+	is(length $large->{result}[0], 200_000, 'an ordinary request over 4096 bytes works');
 };
 
 # Objects and file descriptors must go when clients do.

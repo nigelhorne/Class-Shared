@@ -2,6 +2,21 @@ Revision history for Class-Shared
 
 0.001.0    2026-11-25
         - First release.
+        - Crash denial of service.  A request of a few hundred kilobytes holding
+          data nested 100000 deep made Storable::thaw overflow the C stack and
+          killed the backend, with every shared object, on all perls.  Requests
+          over 4096 bytes are now tried in a child process first.  With a
+          Storable older than 3.05, freezing deeply nested data crashed in the
+          same way; it is now refused over 10000 levels.
+        - Memory denial of service.  The backend bounded what it queued for
+          clients but not what it held for them: each could send most of a
+          64 MiB request, stop, and leave that in memory for as long as it
+          liked, about 8 GiB with the default 128 clients.  New options
+          max_buffered_total (default about 256 MiB; the oldest half-sent
+          request is dropped first) and read_timeout (default 30 seconds for a
+          half-sent request that stops arriving).  Buffers emptied after a
+          large request or reply are now released.  t/edge_cases.t runs under
+          hard memory, processor and file size limits.
         - t/edge_cases.t: hostile and boundary tests.  Three faults found and
           fixed.  read_secret read a whole file with no limit, so a token file
           of /dev/zero used all memory; it now refuses more than 65536 bytes.

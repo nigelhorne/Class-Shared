@@ -230,8 +230,9 @@ file name instead and let this function read it.
 
 **Side effects:** opens, reads and closes the file.
 
-**Dies** if no file name is given, if the file cannot be read, or if the secret
-is empty after the end of it has been trimmed.
+**Dies** if no file name is given, if the file cannot be read, if it is larger
+than 65536 bytes (which also refuses an endless file such as `/dev/zero`), or
+if the secret is empty after the end of it has been trimmed.
 
 #### Api Specification
 
