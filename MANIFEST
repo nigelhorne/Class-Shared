@@ -50,6 +50,7 @@ t/edge_cases.t
 t/function.t
 t/integration.t
 t/logic.t
+t/path.t
 t/unit.t
 t/lib/Shared/Cities.pm
 t/lib/Shared/Command.pm

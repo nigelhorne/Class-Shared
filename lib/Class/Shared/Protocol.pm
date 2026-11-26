@@ -93,6 +93,7 @@ sub write_all {
 			next if $!{EINTR};
 			return (0, "write failed: $!");
 		}
+		# TODO: Unreachable code detected during path analysis. Investigate for removal.
 		if ($written == 0) {
 			return (0, 'write failed: peer closed the connection');
 		}

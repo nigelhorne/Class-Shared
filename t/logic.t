@@ -28,7 +28,6 @@ use File::Temp ();
 use IO::Socket::SSL ();
 use Storable ();
 use Test::Most;
-use Test::Needs;
 
 use lib 't/lib';
 
@@ -36,18 +35,15 @@ use Class::Shared;
 use Class::Shared::Frontend;
 use Class::Shared::Protocol;
 
-# The socket and directory proofs need a unix socket in a directory only its
-# owner can write to, as the rest of the suite does.  The pure protocol proofs
-# would run anywhere, but a file that half runs on a platform the module does
-# not support is worse than one that says why it cannot.
-BEGIN {
-	test_needs 'Test::Permissions';
-
-	plan skip_all => 'the proofs here need unix sockets in an owner-only directory, '
-		. 'which this perl cannot provide (Class::Shared is Unix-only)'
-		unless Class::Shared::_has_unix_sockets()
-			&& Test::Permissions::can_revoke_create();
-}
+# Some proofs need a unix socket, and the directory ones need it in a directory
+# only its owner can write to.  Those subtests ask here and skip in place, one
+# at a time, so a perl the module cannot be used on still proves everything that
+# does not touch the platform: class names, fingerprints, frames and Storable.
+my $has_unix_sockets = Class::Shared::_has_unix_sockets();
+my $owner_only_dir = eval {
+	require Test::Permissions;
+	Test::Permissions::can_revoke_create();
+} ? 1 : 0;
 
 my %config = (
 	# Limits, copied from the Z basic types; the module's own variables are
@@ -207,6 +203,32 @@ sub frame_for {
 		? pack('N', $config{digest_size} + length $body)
 			. Digest::SHA::hmac_sha256($body, $secret) . $body
 		: pack('N', length $body) . $body;
+}
+
+# A proof that needs the platform asks first and returns at once when the
+# answer is no: plan skip_all says why, and the return stops the proof before
+# it touches anything, so nothing after the 1..0 line can run.
+sub skipped_without_unix {
+	my ($what) = @_;
+
+	return 0 if $has_unix_sockets;
+
+	plan skip_all => "the $what proof needs a unix socket, which this perl "
+		. 'cannot make (Class::Shared is Unix-only)';
+
+	return 1;
+}
+
+sub skipped_without_owner_only_dir {
+	my ($what) = @_;
+
+	return 0 if $has_unix_sockets && $owner_only_dir;
+
+	plan skip_all => "the $what proof needs a unix socket in a directory only "
+		. 'its owner can write to, which this perl cannot provide '
+		. '(Class::Shared is Unix-only)';
+
+	return 1;
 }
 
 # ---------------------------------------------------------------- subtests
@@ -433,6 +455,8 @@ subtest 'CheckSocketPath: 0 < #path <= MAXPATH <=> out! = value(path)' => sub {
 };
 
 subtest 'SocketPath: #(default_dir / socket_name) <= MAXPATH <=> out! = value' => sub {
+	return if skipped_without_unix('socket path');
+
 	my $err = $config{err};
 	my $name = $config{socket_name};
 	my $max = $config{max_socket_path};
@@ -461,6 +485,8 @@ subtest 'SocketPath: #(default_dir / socket_name) <= MAXPATH <=> out! = value' =
 };
 
 subtest 'EnsureDir: owner = euid and mode /\ 8#022 = 0 <=> SAFE' => sub {
+	return if skipped_without_owner_only_dir('directory mode');
+
 	my $err = $config{err};
 
 	my ($accepted, $refused) = (0, 0);
@@ -508,6 +534,8 @@ subtest 'EnsureDir: owner = euid and mode /\ 8#022 = 0 <=> SAFE' => sub {
 };
 
 subtest 'EnsureDir state machine: MISSING -> PRESENT -> SAFE | REFUSED' => sub {
+	return if skipped_without_owner_only_dir('directory state');
+
 	my $err = $config{err};
 
 	my $missing = File::Spec->catdir("$tmp", 'state-missing');
@@ -540,6 +568,8 @@ subtest 'EnsureDir state machine: MISSING -> PRESENT -> SAFE | REFUSED' => sub {
 };
 
 subtest 'EnsureDir output: a pair whose second part is undef iff the first is true' => sub {
+	return if skipped_without_owner_only_dir('directory output');
+
 	my @dirs = (
 		File::Spec->catdir("$tmp", 'pair-fresh'),
 		File::Spec->catdir("$tmp", 'state-missing'),
@@ -558,8 +588,54 @@ subtest 'EnsureDir output: a pair whose second part is undef iff the first is tr
 	}
 };
 
-subtest 'UnixSocketProbe: cache = unknown => asked once; cache != unknown => unchanged' => sub {
+# The cache is a package variable, so both sides of it are proved by setting
+# it: no platform is asked, and the NO_UNIX refusals are exercised on a
+# machine that has sockets as well as on one that has not.
+subtest 'UnixSocketProbe: the cache decides, without asking the platform' => sub {
 	my $err = $config{err};
+
+	my $first = Class::Shared::_has_unix_sockets();
+
+	{
+		local $Class::Shared::UNIX_SOCKETS = 0;
+
+		is(Class::Shared::_has_unix_sockets(), 0, 'NO_UNIX: a cached answer is returned as it stands');
+
+		# NO_UNIX: every entry point that needs sockets dies, and says why.
+		dies_with(sub { Class::Shared::socket_path('/tmp') },
+			sprintf($err->{unix_missing}, 'a unix socket'), 'NO_UNIX: socket_path dies');
+		dies_with(sub { Class::Shared::ensure_dir(File::Spec->catdir("$tmp", 'no-unix')) },
+			sprintf($err->{unix_missing}, 'a backend directory'), 'NO_UNIX: ensure_dir dies');
+		ok(!-e File::Spec->catdir("$tmp", 'no-unix'), 'NO_UNIX: nothing is created first');
+	}
+
+	{
+		local $Class::Shared::UNIX_SOCKETS = 1;
+
+		is(Class::Shared::_has_unix_sockets(), 1, 'UNIX_OK: a cached answer is returned as it stands');
+		is(Class::Shared::socket_path('/tmp'), File::Spec->catfile('/tmp', $config{socket_name}),
+			'UNIX_OK: socket_path works when the cache says it can');
+	}
+
+	# An unknown cache is the one case that asks the platform: whatever the
+	# answer is, it is kept for the rest of the run.
+	{
+		local $Class::Shared::UNIX_SOCKETS = undef;
+
+		my $answer = Class::Shared::_has_unix_sockets();
+		ok($answer == 0 || $answer == 1, 'an unknown cache is filled with a boolean');
+		is($Class::Shared::UNIX_SOCKETS, $answer, 'and the answer is cached, so it is asked once');
+	}
+
+	# The proofs above must not leave the cache changed.
+	is(Class::Shared::_has_unix_sockets(), $first, 'the cache is restored after the proofs');
+};
+
+# The cached answer is judged against the platform itself, which is the one
+# thing here that cannot be faked: without sockets there is no answer to
+# compare with, so this is where the socket gate belongs.
+subtest 'UnixSocketProbe: the cache agrees with a real socketpair' => sub {
+	return if skipped_without_unix('socket probe');
 
 	my $first = Class::Shared::_has_unix_sockets();
 	my $second = Class::Shared::_has_unix_sockets();
@@ -573,26 +649,6 @@ subtest 'UnixSocketProbe: cache = unknown => asked once; cache != unknown => unc
 		1;
 	};
 	is($first, $probe, 'the cache agrees with a fresh socketpair probe');
-
-	{
-		local $Class::Shared::UNIX_SOCKETS = 0;
-
-		# NO_UNIX: every entry point that needs sockets dies, and says why.
-		dies_with(sub { Class::Shared::socket_path('/tmp') },
-			sprintf($err->{unix_missing}, 'a unix socket'), 'NO_UNIX: socket_path dies');
-		dies_with(sub { Class::Shared::ensure_dir(File::Spec->catdir("$tmp", 'no-unix')) },
-			sprintf($err->{unix_missing}, 'a backend directory'), 'NO_UNIX: ensure_dir dies');
-		ok(!-e File::Spec->catdir("$tmp", 'no-unix'), 'NO_UNIX: nothing is created first');
-	}
-
-	{
-		local $Class::Shared::UNIX_SOCKETS = 1;
-		is(Class::Shared::socket_path('/tmp'), File::Spec->catfile('/tmp', $config{socket_name}),
-			'UNIX_OK: socket_path works');
-	}
-
-	# The proof above must not leave the cache changed.
-	is(Class::Shared::_has_unix_sockets(), $first, 'the cache is restored after the proofs');
 };
 
 subtest 'DefaultDir: five ranked premises, the first true one wins' => sub {
@@ -970,6 +1026,8 @@ subtest 'EncodeFrame and TakePayload leave the caller\'s $@ alone' => sub {
 };
 
 subtest 'Frontend transport: tcp <=> host or port is given' => sub {
+	return if skipped_without_unix('transport');
+
 	my $err = $config{err};
 	my $socket = File::Spec->catfile("$tmp", 'transport.sock');
 
@@ -1006,6 +1064,8 @@ subtest 'Frontend transport: tcp <=> host or port is given' => sub {
 };
 
 subtest 'Frontend exclusive options: 11 is a contradiction, 00/01/10 are not' => sub {
+	return if skipped_without_unix('exclusive option');
+
 	my $err = $config{err};
 	my $token_file = write_bytes('frontend-token', "token\n");
 	my $cert = File::Spec->catfile('t', 'certs', 'client.pem');

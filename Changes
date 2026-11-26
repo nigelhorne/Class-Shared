@@ -1,6 +1,10 @@
 Revision history for Class-Shared
 
 0.001.0    2026-11-25
+	- New: t/path.t walks every path through the routines of the four modules,
+	  forcing the branches a caller cannot reach with Test::Mockingbird and
+	  checking the outputs with Test::Returns.  Path analysis found one branch
+	  no request can reach: the zero-byte syswrite guard in write_all.
         - Fix: a signal handled by the program no longer makes a read or write
           fail, which closed the frontend and lost its object.
         - Fix: a hello that arrives slowly or never ends is now dropped at
