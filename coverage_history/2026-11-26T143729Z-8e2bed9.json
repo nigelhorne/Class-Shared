@@ -1,0 +1,2216 @@
+{
+   "runs" : [
+      {
+         "OS" : null,
+         "abstract" : null,
+         "dir" : null,
+         "finish" : 1795703878.33063,
+         "name" : null,
+         "perl" : null,
+         "run" : null,
+         "start" : null,
+         "version" : null
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703982.19035,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703858.76938,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703858.8626,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703858.86252,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703859.07903,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/00-load.t",
+         "start" : 1795703859.01047,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703859.47621,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/01-protocol.t",
+         "start" : 1795703859.46768,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703859.75531,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/02-frontend.t",
+         "start" : 1795703859.75162,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703861.49398,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/02-frontend.t",
+         "start" : 1795703859.75162,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703861.024,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/02-frontend.t",
+         "start" : 1795703859.75162,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703861.02034,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703860.19633,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703861.48933,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703861.47044,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703861.94995,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/03-cli.t",
+         "start" : 1795703861.94648,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703864.19044,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/03-cli.t",
+         "start" : 1795703861.94648,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.65418,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703862.26481,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703862.38108,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703862.38042,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703862.59578,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703862.59434,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703862.80928,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703862.80736,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.01945,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703863.01788,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.22902,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703863.22846,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.43144,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703863.43071,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.65399,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703863.65234,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703863.87594,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703863.87548,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703864.08592,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703864.08541,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703873.21972,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/04-tcp.t",
+         "start" : 1795703864.54108,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703864.71379,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703864.6483,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703865.11955,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703865.05609,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703872.97421,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703865.46195,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703867.04123,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703866.74342,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703873.22052,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703867.39564,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703872.77698,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703867.90114,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703876.97538,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/05-cli-tcp.t",
+         "start" : 1795703873.61857,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703876.72848,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703873.67013,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703873.95735,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703873.8861,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703874.20783,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703874.17802,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703874.4561,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703874.42704,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703874.69874,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703874.67157,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703874.91656,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703874.91593,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703875.15504,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703875.12552,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703875.40069,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703875.37176,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703875.69129,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703875.61694,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703875.942,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703875.91033,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703876.15953,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703876.15878,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703876.43911,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703876.36882,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703876.728,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703876.6574,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703877.77133,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/06-real-class.t",
+         "start" : 1795703877.22637,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703877.22996,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/06-real-class.t",
+         "start" : 1795703877.22637,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703877.77111,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703877.53406,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703877.66763,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703877.66614,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703878.0894,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/07-platform.t",
+         "start" : 1795703878.0579,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703879.05899,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/08-concurrent-spawn.t",
+         "start" : 1795703878.32727,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703878.95445,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703878.62666,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703878.74456,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703878.74306,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703878.95425,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703878.95268,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703885.91708,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/09-unix-queue.t",
+         "start" : 1795703879.42996,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703879.62203,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703879.62023,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703879.84355,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703879.84171,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703881.12235,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703881.12066,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703881.35224,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703881.33008,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703881.63268,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703881.63081,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703881.86488,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703881.8427,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703885.34447,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703885.34269,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703885.57778,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703885.55563,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703885.81109,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703885.78881,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703887.31023,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/10-regressions.t",
+         "start" : 1795703886.36988,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703886.37493,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/10-regressions.t",
+         "start" : 1795703886.36988,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703887.30911,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703886.82707,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703886.96,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703886.9594,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703887.18411,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703887.18344,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703887.83847,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/11-backend-options.t",
+         "start" : 1795703887.80557,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703888.27735,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/12-backend-log.t",
+         "start" : 1795703888.25964,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703888.61717,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/13-database-abstraction.t",
+         "start" : 1795703888.61701,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703889.32566,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/14-template.t",
+         "start" : 1795703888.8169,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703888.82044,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/14-template.t",
+         "start" : 1795703888.8169,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703889.30457,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703889.14974,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703889.62244,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/15-date-manip.t",
+         "start" : 1795703889.62228,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703889.91257,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/16-backend-logic.t",
+         "start" : 1795703889.86977,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703890.85543,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703891.34521,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703900.79782,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703891.83425,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703890.36591,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703892.33403,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/17-first-time-user.t",
+         "start" : 1795703890.35355,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703890.85025,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703890.83692,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703891.34194,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703891.32849,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703891.83089,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703891.81359,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703892.32997,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703892.30363,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703892.81879,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703892.80497,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703892.94947,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703892.94904,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703893.16135,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703893.16089,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703893.37189,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703893.3714,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703893.58094,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703893.58046,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703893.79079,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703893.79028,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703894.00236,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703894.00159,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703894.21589,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703894.21505,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703894.42889,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703894.42827,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703894.6431,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703894.64251,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703894.85518,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703894.85459,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703895.13098,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703895.06729,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703895.47606,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703895.47549,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703895.68553,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703895.68496,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703900.45312,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703895.89667,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703895.96538,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703895.89667,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703896.31555,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703896.31356,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703896.59267,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703896.52446,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703898.00261,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703896.52446,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703900.47275,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703900.45075,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703900.69062,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703900.68992,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703902.20326,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/18-regex.t",
+         "start" : 1795703901.28801,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703901.53696,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/18-regex.t",
+         "start" : 1795703901.28801,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703901.98633,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703901.965,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703902.09788,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703902.09728,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703905.76324,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/19-security.t",
+         "start" : 1795703902.69617,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703903.51981,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/19-security.t",
+         "start" : 1795703902.69617,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703903.99598,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/19-security.t",
+         "start" : 1795703902.69617,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703903.10992,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703903.10923,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703903.98708,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703903.97713,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703904.46088,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703904.45011,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703904.66284,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703904.63928,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703904.86574,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703904.86144,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703905.06928,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703905.06512,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703905.27274,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703905.26874,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703905.49589,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703905.47281,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703905.69929,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703905.67647,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703911.7793,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/data-flow.t",
+         "start" : 1795703906.29579,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703932.15334,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/edge_cases.t",
+         "start" : 1795703912.39377,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703912.67591,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/edge_cases.t",
+         "start" : 1795703912.39377,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703925.47327,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703925.4727,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703925.74955,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703925.6812,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703926.10389,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703926.10334,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703931.95388,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703928.39622,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703950.42134,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703936.02144,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703937.48051,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703942.49792,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703952.19196,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703944.02017,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/function.t",
+         "start" : 1795703932.82526,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703965.99666,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703954.36862,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703953.84936,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703965.48459,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703957.69352,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703964.44284,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703969.443,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703958.81734,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703955.39295,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703964.95233,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703966.5095,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703954.8791,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703958.27394,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/integration.t",
+         "start" : 1795703953.80091,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703954.36295,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703954.34889,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703955.38529,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703954.86962,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703955.38599,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703955.37956,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703955.9809,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703955.96927,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703956.09137,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703956.09069,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703956.29999,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703956.29941,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703956.57595,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703956.50797,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703957.35115,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703956.50797,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703956.9262,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703956.9244,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703957.13947,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703957.13781,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703957.37094,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703957.34877,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703957.58499,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703957.58424,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703958.79988,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703958.78164,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703963.35121,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703959.32538,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703964.9479,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703964.94107,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703965.47857,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703965.45613,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703965.99182,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703965.98451,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703966.5018,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703966.4973,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703967.06744,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "-e",
+         "start" : 1795703967.01099,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703967.44688,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703967.44618,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703967.65714,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703967.65639,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703967.8649,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703967.86418,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703968.0734,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703968.07273,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703968.28259,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703968.28185,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703968.49447,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703968.49374,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703968.70613,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703968.7054,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703968.91672,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703968.916,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703969.1282,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703969.12747,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703969.33962,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "bin/class-shared",
+         "start" : 1795703969.33891,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703969.91859,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/pod-synopsis.t",
+         "start" : 1795703969.91839,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703974.95922,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/unit.t",
+         "start" : 1795703970.18019,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703975.56497,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/unit.t",
+         "start" : 1795703970.18019,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703975.56623,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/unit.t",
+         "start" : 1795703970.18019,
+         "version" : "0.001.0"
+      },
+      {
+         "OS" : "linux",
+         "abstract" : "Keep one instance of a class and let other processes call it",
+         "dir" : "/home/runner/work/Class-Shared/Class-Shared",
+         "finish" : 1795703981.68179,
+         "name" : "Class-Shared",
+         "perl" : "5.40.5",
+         "run" : "t/unit.t",
+         "start" : 1795703970.18019,
+         "version" : "0.001.0"
+      }
+   ],
+   "summary" : {
+      "/tmp/YXYiakE9_w/FnTest/BadImport.pm" : {},
+      "/tmp/YXYiakE9_w/FnTest/NoImport.pm" : {},
+      "Total" : {
+         "branch" : {
+            "covered" : 812,
+            "error" : 114,
+            "percentage" : 87.6889848812095,
+            "total" : 926,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 345,
+            "error" : 121,
+            "percentage" : 74.0343347639485,
+            "total" : 466,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 1415,
+            "error" : 73,
+            "percentage" : 95.0940860215054,
+            "total" : 1488
+         },
+         "subroutine" : {
+            "covered" : 161,
+            "error" : 1,
+            "percentage" : 99.3827160493827,
+            "total" : 162
+         },
+         "total" : {
+            "covered" : 2733,
+            "error" : 309,
+            "percentage" : 89.8422090729783,
+            "total" : 3042,
+            "uncoverable" : 0
+         }
+      },
+      "bin/class-shared" : {
+         "branch" : {
+            "covered" : 103,
+            "error" : 23,
+            "percentage" : 81.7460317460317,
+            "total" : 126,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 40,
+            "error" : 38,
+            "percentage" : 51.2820512820513,
+            "total" : 78,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 195,
+            "error" : 7,
+            "percentage" : 96.5346534653465,
+            "total" : 202
+         },
+         "subroutine" : {
+            "covered" : 24,
+            "percentage" : 100,
+            "total" : 24
+         },
+         "total" : {
+            "covered" : 362,
+            "error" : 68,
+            "percentage" : 84.1860465116279,
+            "total" : 430,
+            "uncoverable" : 0
+         }
+      },
+      "blib/lib/Class/Shared.pm" : {
+         "branch" : {
+            "covered" : 76,
+            "error" : 10,
+            "percentage" : 88.3720930232558,
+            "total" : 86,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 23,
+            "error" : 1,
+            "percentage" : 95.8333333333333,
+            "total" : 24,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 111,
+            "error" : 1,
+            "percentage" : 99.1071428571429,
+            "total" : 112
+         },
+         "subroutine" : {
+            "covered" : 20,
+            "percentage" : 100,
+            "total" : 20
+         },
+         "total" : {
+            "covered" : 230,
+            "error" : 12,
+            "percentage" : 95.0413223140496,
+            "total" : 242,
+            "uncoverable" : 0
+         }
+      },
+      "blib/lib/Class/Shared/Backend.pm" : {
+         "branch" : {
+            "covered" : 372,
+            "error" : 46,
+            "percentage" : 88.9952153110048,
+            "total" : 418,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 137,
+            "error" : 62,
+            "percentage" : 68.8442211055276,
+            "total" : 199,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 689,
+            "error" : 26,
+            "percentage" : 96.3636363636364,
+            "total" : 715
+         },
+         "subroutine" : {
+            "covered" : 63,
+            "percentage" : 100,
+            "total" : 63
+         },
+         "total" : {
+            "covered" : 1261,
+            "error" : 134,
+            "percentage" : 90.3942652329749,
+            "total" : 1395,
+            "uncoverable" : 0
+         }
+      },
+      "blib/lib/Class/Shared/Frontend.pm" : {
+         "branch" : {
+            "covered" : 204,
+            "error" : 20,
+            "percentage" : 91.0714285714286,
+            "total" : 224,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 133,
+            "error" : 15,
+            "percentage" : 89.8648648648649,
+            "total" : 148,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 313,
+            "error" : 19,
+            "percentage" : 94.2771084337349,
+            "total" : 332
+         },
+         "subroutine" : {
+            "covered" : 41,
+            "percentage" : 100,
+            "total" : 41
+         },
+         "total" : {
+            "covered" : 691,
+            "error" : 54,
+            "percentage" : 92.751677852349,
+            "total" : 745,
+            "uncoverable" : 0
+         }
+      },
+      "blib/lib/Class/Shared/Protocol.pm" : {
+         "branch" : {
+            "covered" : 57,
+            "error" : 15,
+            "percentage" : 79.1666666666667,
+            "total" : 72,
+            "uncoverable" : 0
+         },
+         "condition" : {
+            "covered" : 12,
+            "error" : 5,
+            "percentage" : 70.5882352941177,
+            "total" : 17,
+            "uncoverable" : 0
+         },
+         "statement" : {
+            "covered" : 107,
+            "error" : 20,
+            "percentage" : 84.251968503937,
+            "total" : 127
+         },
+         "subroutine" : {
+            "covered" : 13,
+            "error" : 1,
+            "percentage" : 92.8571428571429,
+            "total" : 14
+         },
+         "total" : {
+            "covered" : 189,
+            "error" : 41,
+            "percentage" : 82.1739130434783,
+            "total" : 230,
+            "uncoverable" : 0
+         }
+      }
+   }
+}
