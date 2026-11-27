@@ -1,6 +1,6 @@
 Revision history for Class-Shared
 
-0.001.0    2026-11-27
+0.001.0	Thu Nov 26 09:16:20 PM EST 2026
 	First release.
 
 	- One backend process holds one object per client connection, so a class
