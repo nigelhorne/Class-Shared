@@ -20,7 +20,7 @@ https://pjcj.net
 <h1>Branch Coverage</h1>
 <table>
 <tr><td class="h" align="right">File:</td><td align="left">bin/class-shared</td></tr>
-<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">82.3%</td></tr>
+<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">82.8%</td></tr>
 </table>
 <div><br/></div>
 <table>
@@ -85,16 +85,18 @@ https://pjcj.net
 <tr><td class="h"><a id="L374">374</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($hello)</td></tr>
 <tr><td class="h"><a id="L380">380</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (defined $host and defined $hello_error and $hello_error =~ /closed by peer|read failed|write failed/)</td></tr>
 <tr><td class="h"><a id="L394">394</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (defined $secret)</td></tr>
-<tr><td class="h"><a id="L404">404</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless ($hello-&gt;{&#39;ok&#39;})</td></tr>
+<tr><td class="h"><a id="L404">404</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($hello-&gt;{&#39;ok&#39;})</td></tr>
 <tr><td class="h"><a id="L412">412</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $response</td></tr>
 <tr><td class="h"><a id="L421">421</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $bytes</td></tr>
-<tr><td class="h"><a id="L424">424</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless $ok</td></tr>
-<tr><td class="h"><a id="L427">427</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $response</td></tr>
-<tr><td class="h"><a id="L434">434</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host</td></tr>
-<tr><td class="h"><a id="L443">443</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if -e $socket</td></tr>
-<tr><td class="h"><a id="L458">458</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (print {*STDOUT;} $text and &quot;STDOUT&quot;-&gt;flush)</td></tr>
-<tr><td class="h"><a id="L468">468</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $sock</td></tr>
-<tr><td class="h"><a id="L475">475</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $message</td></tr>
+<tr><td class="h"><a id="L424">424</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($ok)</td></tr>
+<tr><td class="h"><a id="L428">428</a></td><td class="c0">50</td><td class="c3">T</td><td class="c0">F</td><td class="s">if ($request-&gt;{&#39;op&#39;} eq &quot;hello&quot;)</td></tr>
+<tr><td class="h"><a id="L430">430</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ref $refusal eq &quot;HASH&quot; and not $refusal-&gt;{&#39;ok&#39;}</td></tr>
+<tr><td class="h"><a id="L437">437</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $response</td></tr>
+<tr><td class="h"><a id="L444">444</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $host</td></tr>
+<tr><td class="h"><a id="L453">453</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if -e $socket</td></tr>
+<tr><td class="h"><a id="L468">468</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless (print {*STDOUT;} $text and &quot;STDOUT&quot;-&gt;flush)</td></tr>
+<tr><td class="h"><a id="L478">478</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $sock</td></tr>
+<tr><td class="h"><a id="L485">485</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless defined $message</td></tr>
 </table>
 </body>
 </html>
