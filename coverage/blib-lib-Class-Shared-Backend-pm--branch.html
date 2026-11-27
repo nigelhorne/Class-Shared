@@ -20,7 +20,7 @@ https://pjcj.net
 <h1>Branch Coverage</h1>
 <table>
 <tr><td class="h" align="right">File:</td><td align="left">blib/lib/Class/Shared/Backend.pm</td></tr>
-<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">88.3%</td></tr>
+<tr><td class="h" align="right">Coverage:</td><td align="left" class="c1">88.8%</td></tr>
 </table>
 <div><br/></div>
 <table>
@@ -122,8 +122,8 @@ https://pjcj.net
 <tr><td class="h"><a id="L818">818</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if $self-&gt;{&#39;idle_timeout&#39;} and defined $client-&gt;{&#39;last_request&#39;} and not length $client-&gt;{&#39;outbuf&#39;}</td></tr>
 <tr><td class="h"><a id="L838">838</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if $client-&gt;{&#39;closed&#39;}</td></tr>
 <tr><td class="h"><a id="L840">840</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $deadline</td></tr>
-<tr><td class="h"><a id="L841">841</a></td><td class="c0">50</td><td class="c3">T</td><td class="c0">F</td><td class="s">if $deadline &gt; $now</td></tr>
-<tr><td class="h"><a id="L842">842</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if length $readable and vec $readable, fileno $client-&gt;{&#39;fh&#39;}, 1</td></tr>
+<tr><td class="h"><a id="L841">841</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if $deadline &gt; $now</td></tr>
+<tr><td class="h"><a id="L842">842</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if length $readable and vec $readable, fileno $client-&gt;{&#39;fh&#39;}, 1</td></tr>
 <tr><td class="h"><a id="L864">864</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $limit and defined $self-&gt;{&#39;log&#39;}</td></tr>
 <tr><td class="h"><a id="L867">867</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless lstat $path and -f _ and -s _ &gt; $limit</td></tr>
 <tr><td class="h"><a id="L874">874</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless open my $log, &quot;+&lt;&quot;, $path</td></tr>

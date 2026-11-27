@@ -20,7 +20,7 @@ https://pjcj.net
 <h1>Branch Coverage</h1>
 <table>
 <tr><td class="h" align="right">File:</td><td align="left">blib/lib/Class/Shared/Frontend.pm</td></tr>
-<tr><td class="h" align="right">Coverage:</td><td align="left" class="c2">91.2%</td></tr>
+<tr><td class="h" align="right">Coverage:</td><td align="left" class="c2">90.1%</td></tr>
 </table>
 <div><br/></div>
 <table>
@@ -118,30 +118,33 @@ https://pjcj.net
 }
 })</td></tr>
 <tr><td class="h"><a id="L655">655</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless ($state)</td></tr>
-<tr><td class="h"><a id="L661">661</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($state ne &quot;running&quot;)</td></tr>
-<tr><td class="h"><a id="L663">663</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless (defined $pid)</td></tr>
-<tr><td class="h"><a id="L669">669</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($pid == 0)</td></tr>
-<tr><td class="h"><a id="L686">686</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (my $handshake_error = $@)</td></tr>
-<tr><td class="h"><a id="L691">691</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($greeted)</td></tr>
-<tr><td class="h"><a id="L701">701</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if not $sock and $state eq &quot;running&quot;</td></tr>
-<tr><td class="h"><a id="L721">721</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless (sysopen $owner, $owner_path, 66, 384)</td></tr>
-<tr><td class="h"><a id="L727">727</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (flock $owner, 5)</td></tr>
-<tr><td class="h"><a id="L729">729</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (-e $path and not -S $path) { }</td></tr>
+<tr><td class="h"><a id="L661">661</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if ($state ne &quot;running&quot; and not $self-&gt;_fork_backend($lock))</td></tr>
+<tr><td class="h"><a id="L671">671</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (my $handshake_error = $@)</td></tr>
+<tr><td class="h"><a id="L676">676</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($greeted)</td></tr>
+<tr><td class="h"><a id="L684">684</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($state eq &quot;running&quot;)</td></tr>
+<tr><td class="h"><a id="L686">686</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $state</td></tr>
+<tr><td class="h"><a id="L687">687</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if ($state ne &quot;running&quot; and not $self-&gt;_fork_backend($lock))</td></tr>
+<tr><td class="h"><a id="L697">697</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if not $sock and ($state // &quot;&quot;) eq &quot;running&quot;</td></tr>
+<tr><td class="h"><a id="L712">712</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless (defined $pid)</td></tr>
+<tr><td class="h"><a id="L717">717</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($pid == 0)</td></tr>
+<tr><td class="h"><a id="L745">745</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless (sysopen $owner, $owner_path, 66, 384)</td></tr>
+<tr><td class="h"><a id="L751">751</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (flock $owner, 5)</td></tr>
+<tr><td class="h"><a id="L753">753</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if (-e $path and not -S $path) { }</td></tr>
 <tr><td class="h"></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">elsif (-e $path and not unlink($path)) { }</td></tr>
-<tr><td class="h"><a id="L752">752</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $error and $error =~ /\AClass::Shared: /</td></tr>
-<tr><td class="h"><a id="L768">768</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($lock)</td></tr>
-<tr><td class="h"><a id="L769">769</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $lock</td></tr>
-<tr><td class="h"><a id="L772">772</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless POSIX::setsid()</td></tr>
-<tr><td class="h"><a id="L776">776</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if not defined $pid or $pid &gt; 0</td></tr>
-<tr><td class="h"><a id="L785">785</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $detached</td></tr>
-<tr><td class="h"><a id="L787">787</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $_ and not ref $_</td></tr>
-<tr><td class="h"><a id="L800">800</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if (${^TAINT})</td></tr>
-<tr><td class="h"><a id="L801">801</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($perl) = $perl =~ /\A([^\0]+)\z/</td></tr>
-<tr><td class="h"><a id="L802">802</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($socket) = $socket =~ /\A([^\0]+)\z/</td></tr>
-<tr><td class="h"><a id="L803">803</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($log) = $log =~ /\A([^\0]+)\z/</td></tr>
-<tr><td class="h"><a id="L806">806</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if -d $_</td></tr>
-<tr><td class="h"><a id="L807">807</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">m[\A(/[^\0]*)\z] ? :</td></tr>
-<tr><td class="h"><a id="L808">808</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">@safe ? :</td></tr>
+<tr><td class="h"><a id="L776">776</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">unless defined $error and $error =~ /\AClass::Shared: /</td></tr>
+<tr><td class="h"><a id="L792">792</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if ($lock)</td></tr>
+<tr><td class="h"><a id="L793">793</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless close $lock</td></tr>
+<tr><td class="h"><a id="L796">796</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless POSIX::setsid()</td></tr>
+<tr><td class="h"><a id="L800">800</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if not defined $pid or $pid &gt; 0</td></tr>
+<tr><td class="h"><a id="L809">809</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">unless $detached</td></tr>
+<tr><td class="h"><a id="L811">811</a></td><td class="c3">100</td><td class="c3">T</td><td class="c3">F</td><td class="s">if defined $_ and not ref $_</td></tr>
+<tr><td class="h"><a id="L824">824</a></td><td class="c0">50</td><td class="c0">T</td><td class="c3">F</td><td class="s">if (${^TAINT})</td></tr>
+<tr><td class="h"><a id="L825">825</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($perl) = $perl =~ /\A([^\0]+)\z/</td></tr>
+<tr><td class="h"><a id="L826">826</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($socket) = $socket =~ /\A([^\0]+)\z/</td></tr>
+<tr><td class="h"><a id="L827">827</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">unless ($log) = $log =~ /\A([^\0]+)\z/</td></tr>
+<tr><td class="h"><a id="L830">830</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">if -d $_</td></tr>
+<tr><td class="h"><a id="L831">831</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">m[\A(/[^\0]*)\z] ? :</td></tr>
+<tr><td class="h"><a id="L832">832</a></td><td class="c0">0</td><td class="c0">T</td><td class="c0">F</td><td class="s">@safe ? :</td></tr>
 </table>
 </body>
 </html>
