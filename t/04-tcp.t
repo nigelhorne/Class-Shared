@@ -8,7 +8,7 @@ use File::Spec ();
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 use Time::HiRes ();
-use POSIX ();
+use POSIX qw(WNOHANG);
 use lib 't/lib';
 
 # A backend here keeps its lock, pid file and log beside a unix socket path in
@@ -175,16 +175,52 @@ sub frontend {
 	return Class::Shared::Frontend->new('Shared::Counter', %opt);
 }
 
-my $ready = 0;
-for (1 .. 200) {
-	my $probe_socket = eval { frontend() };
-	if ($probe_socket) {
-		$probe_socket->shared_close;
-		$ready = 1;
-		last;
+# How long a backend may take to start.  This is far longer than most machines
+# need, because a slow smoke tester has taken more than five seconds to get
+# from exec() to listening; the wait ends as soon as the backend answers.
+my $start_wait = 60;
+
+# Tries $connect until it returns an object, and returns that.  Gives up, and
+# says why, when the backend's process has exited or $start_wait has passed.
+# $pid is a reference, so that a process reaped here is not signalled later.
+sub wait_for_backend {
+	my ($pid, $log, $connect) = @_;
+
+	my $give_up = Time::HiRes::time() + $start_wait;
+	my $why;
+	while (1) {
+		my $got = eval { $connect->() };
+		return $got if $got;
+		$why = $@;
+
+		if (waitpid($$pid, WNOHANG) == $$pid) {
+			diag("the backend exited with wait status $?");
+			undef $$pid;
+			last;
+		}
+
+		if (Time::HiRes::time() >= $give_up) {
+			diag("the backend did not answer within $start_wait seconds");
+			last;
+		}
+
+		select(undef, undef, undef, 0.05);
 	}
-	select(undef, undef, undef, 0.05);
+
+	diag($why) if $why;
+	if (defined $log && open(my $log_fh, '<', $log)) {
+		diag(do { local $/; <$log_fh> });
+		close $log_fh;
+	}
+
+	return undef;
 }
+
+my $ready = wait_for_backend(\$pid, undef, sub {
+	my $probe_frontend = frontend();
+	$probe_frontend->shared_close;
+	return 1;
+});
 
 ok($ready, 'the TLS backend came up and a verified client reached it')
 	or BAIL_OUT('no backend to test against');
@@ -600,7 +636,8 @@ close $partial;
 
 # The handshake deadline is a constructor option, so a backend with a short one
 # can be started here: a client that connects and says nothing has to lose its
-# slot when its time is up, and the real client has to keep working.
+# slot when its time is up, and the real client has to keep working.  It is not
+# so short that a slow machine cannot finish a real handshake within it.
 my $deadline_probe = IO::Socket::INET->new(
 	LocalAddr => '127.0.0.1',
 	LocalPort => 0,
@@ -627,7 +664,7 @@ if (!$short_pid) {
 			'handshake_timeout => shift') . ')->run()',
 		'127.0.0.1', $deadline_port, 's3cret-token',
 		$pem{server}, $pem{'server-key'}, $pem{ca},
-		$deadline_dir, File::Spec->catfile($deadline_dir, 'log'), 1,
+		$deadline_dir, File::Spec->catfile($deadline_dir, 'log'), 3,
 	);
 	POSIX::_exit(127);
 }
@@ -636,14 +673,12 @@ END {
 	kill 'TERM', $short_pid if $short_pid && kill(0, $short_pid);
 }
 
-my $real;
-for (1 .. 100) {
-	$real = eval { frontend(port => $deadline_port, ctor => [start => 3]) };
-	last if $real;
-	select(undef, undef, undef, 0.05);
-}
+my $real = wait_for_backend(
+	\$short_pid, File::Spec->catfile($deadline_dir, 'log'),
+	sub { frontend(port => $deadline_port, ctor => [start => 3]) },
+);
 
-ok($real, 'a backend with a short handshake deadline came up') or diag $@;
+ok($real, 'a backend with a short handshake deadline came up');
 
 if ($real) {
 	is($real->value, 3, 'the real client has its object');
@@ -668,7 +703,8 @@ if ($real) {
 	ok($holding, 'a silent client holds a slot while its handshake is pending');
 
 	my $freed = 0;
-	for (1 .. 60) {
+	my $free_by = Time::HiRes::time() + 30;
+	while (Time::HiRes::time() < $free_by) {
 		if ($real->shared_status->{clients} <= $baseline) {
 			$freed = 1;
 			last;
@@ -728,14 +764,12 @@ END {
 	kill 'TERM', $queue_pid if $queue_pid && kill(0, $queue_pid);
 }
 
-my $queue_ready;
-for (1 .. 100) {
-	$queue_ready = eval { frontend(port => $queue_port, ctor => [start => 23]) };
-	last if $queue_ready;
-	select(undef, undef, undef, 0.05);
-}
+my $queue_ready = wait_for_backend(
+	\$queue_pid, File::Spec->catfile($queue_dir, 'log'),
+	sub { frontend(port => $queue_port, ctor => [start => 23]) },
+);
 
-ok($queue_ready, 'a backend with a small reply queue came up') or diag $@;
+ok($queue_ready, 'a backend with a small reply queue came up');
 $queue_ready->shared_close if $queue_ready;
 
 # A raw client, so the test can ask for an answer and then simply not read it.
@@ -787,64 +821,66 @@ sub drain_until_closed {
 	return 0;
 }
 
-my ($hog, $hog_id) = tls_client_with_object($queue_port);
-ok($hog, 'a client that will not read has a connection and an object');
+if ($queue_ready) {
+	my ($hog, $hog_id) = tls_client_with_object($queue_port);
+	ok($hog, 'a client that will not read has a connection and an object');
 
-# 16 MiB back against an 8 MiB queue: more than any socket buffer, so a writer
-# that waited for the socket would sit there, and more than this client may
-# hold unwritten, so the backend has to give up on it instead.
-my ($hog_call) = Class::Shared::Protocol::encode_frame({
-	op     => 'call',
-	id     => $hog_id,
-	method => 'blob',
-	args   => [16 * 1024 * 1024],
-	want   => 'scalar',
-}, 's3cret-token');
-BAIL_OUT('cannot encode the 16 MiB request') unless defined $hog_call;
-Class::Shared::Protocol::write_all($hog, $hog_call);
-
-my $queue_started = Time::HiRes::time();
-my $waiting = eval { frontend(port => $queue_port, ctor => [start => 29]) };
-my $queue_elapsed = Time::HiRes::time() - $queue_started;
-
-ok($waiting, 'a client that never reads its reply does not stop another') or diag $@;
-is($waiting->value, 29, 'the other client has its object') if $waiting;
-cmp_ok($queue_elapsed, '<', 3,
-	"and is served at once, not when the reply goes out ($queue_elapsed s)");
-$waiting->shared_close if $waiting;
-
-# The reply could not be queued, so that connection is finished: what is left
-# to read is a closed stream, not a megabyte of answer.
-ok(drain_until_closed($hog),
-	'and a client that will not read is dropped when its queue passes the bound');
-close $hog;
-
-# The bound is not only about one oversized reply: a client that asks for
-# moderate answers, each of which fits, is dropped once enough of them are
-# waiting.  Twelve replies of 2 MiB are 24 MiB against an 8 MiB bound, and this
-# client reads none of it.
-my ($piler, $piler_id) = tls_client_with_object($queue_port);
-ok($piler, 'a second client that will not read has a connection and an object');
-
-for (1 .. 12) {
-	my ($call) = Class::Shared::Protocol::encode_frame({
+	# 16 MiB back against an 8 MiB queue: more than any socket buffer, so a writer
+	# that waited for the socket would sit there, and more than this client may
+	# hold unwritten, so the backend has to give up on it instead.
+	my ($hog_call) = Class::Shared::Protocol::encode_frame({
 		op     => 'call',
-		id     => $piler_id,
+		id     => $hog_id,
 		method => 'blob',
-		args   => [2 * 1024 * 1024],
+		args   => [16 * 1024 * 1024],
 		want   => 'scalar',
 	}, 's3cret-token');
-	last unless defined $call;
+	BAIL_OUT('cannot encode the 16 MiB request') unless defined $hog_call;
+	Class::Shared::Protocol::write_all($hog, $hog_call);
 
-	# The backend may drop this client part way through, so a failed write is
-	# the test's cue to stop asking, not a failure of its own.
-	my ($written) = Class::Shared::Protocol::write_all($piler, $call);
-	last unless $written;
+	my $queue_started = Time::HiRes::time();
+	my $waiting = eval { frontend(port => $queue_port, ctor => [start => 29]) };
+	my $queue_elapsed = Time::HiRes::time() - $queue_started;
+
+	ok($waiting, 'a client that never reads its reply does not stop another') or diag $@;
+	is($waiting->value, 29, 'the other client has its object') if $waiting;
+	cmp_ok($queue_elapsed, '<', 3,
+		"and is served at once, not when the reply goes out ($queue_elapsed s)");
+	$waiting->shared_close if $waiting;
+
+	# The reply could not be queued, so that connection is finished: what is left
+	# to read is a closed stream, not a megabyte of answer.
+	ok(drain_until_closed($hog),
+		'and a client that will not read is dropped when its queue passes the bound');
+	close $hog;
+
+	# The bound is not only about one oversized reply: a client that asks for
+	# moderate answers, each of which fits, is dropped once enough of them are
+	# waiting.  Twelve replies of 2 MiB are 24 MiB against an 8 MiB bound, and this
+	# client reads none of it.
+	my ($piler, $piler_id) = tls_client_with_object($queue_port);
+	ok($piler, 'a second client that will not read has a connection and an object');
+
+	for (1 .. 12) {
+		my ($call) = Class::Shared::Protocol::encode_frame({
+			op     => 'call',
+			id     => $piler_id,
+			method => 'blob',
+			args   => [2 * 1024 * 1024],
+			want   => 'scalar',
+		}, 's3cret-token');
+		last unless defined $call;
+
+		# The backend may drop this client part way through, so a failed write is
+		# the test's cue to stop asking, not a failure of its own.
+		my ($written) = Class::Shared::Protocol::write_all($piler, $call);
+		last unless $written;
+	}
+
+	ok(drain_until_closed($piler),
+		'and is dropped when replies that each fit add up past the bound');
+	close $piler;
 }
-
-ok(drain_until_closed($piler),
-	'and is dropped when replies that each fit add up past the bound');
-close $piler;
 
 # The queue's deadline is not a unix-socket thing either.  Over TLS a write that
 # stops making progress is an SSL would-block, which is a different call on the
@@ -889,15 +925,12 @@ END {
 	kill 'TERM', $stall_pid if $stall_pid && kill(0, $stall_pid);
 }
 
-my $stall_ready;
-for (1 .. 100) {
-	$stall_ready = eval { frontend(port => $stall_port, ctor => [start => 41]) };
-	last if $stall_ready;
-	select(undef, undef, undef, 0.05);
-}
+my $stall_ready = wait_for_backend(
+	\$stall_pid, $stall_log,
+	sub { frontend(port => $stall_port, ctor => [start => 41]) },
+);
 
-ok($stall_ready, 'a TLS backend with a one second write timeout came up')
-	or diag $@;
+ok($stall_ready, 'a TLS backend with a one second write timeout came up');
 
 if ($stall_ready) {
 	my $baseline = $stall_ready->shared_status->{objects};

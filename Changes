@@ -1,5 +1,12 @@
 Revision history for Class-Shared
 
+0.001.1
+	- Tests: t/04-tcp.t gives each backend up to 60 seconds to start, not
+	  about 5, and a longer handshake deadline, so that it passes on slow
+	  machines.  A queue backend that does not start now fails the file
+	  without stopping the whole test run.
+	  Fixes https://matrix.perl-magpie.org/results/0de71d80-ea3f-11f1-8897-9fe2dce04585
+
 0.001.0	Thu Nov 26 09:16:20 PM EST 2026
 	First release.
 
