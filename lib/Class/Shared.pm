@@ -535,10 +535,14 @@ sub _has_unix_sockets {
 	return $UNIX_SOCKETS if defined $UNIX_SOCKETS;
 
 	$UNIX_SOCKETS = eval {
-		# socketpair is the real test.  IO::Socket::UNIX is not required here:
-		# it would cost every client process about 1.2 MB, and the backend and
-		# the command load it themselves when they need it.
+		# Both have to work.  A Windows perl 5.26 emulates socketpair, so it
+		# succeeds, but cannot name a unix socket, and pack_sockaddr_un dies.
+		# IO::Socket::UNIX is not required here: it would cost every client
+		# process about 1.2 MB, and the backend and the command load it
+		# themselves when they need it.
 		require Socket;
+
+		Socket::pack_sockaddr_un('probe');
 
 		socketpair(my $reader, my $writer, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0)
 			? 1
@@ -1697,7 +1701,8 @@ where C<trim> removes white space from the end only.
     ┌─ UnixSocketProbe ───────────────────────────────────────
     │ cache, cache' : {unknown, yes, no}
     ├─────────────────────────────────────────────────────────
-    │ cache = unknown ⇒ cache' ∈ {yes, no}    asked once, by trying socketpair
+    │ cache = unknown ⇒ cache' ∈ {yes, no}    asked once, by naming a socket and
+    │                                         trying socketpair; both must work
     │ cache ≠ unknown ⇒ cache' = cache        the answer never changes in a run
     └─────────────────────────────────────────────────────────
 
@@ -1707,7 +1712,7 @@ The functions in this file keep almost no state.  The one piece they do keep is
 the answer to "can this perl make a unix socket?", which is worked out once,
 the first time it is needed, and then never changes.
 
-                try socketpair() works
+                  both tries work
     +---------+ -------------------------> +---------+ <---+
     | UNKNOWN |                            | UNIX_OK |     | every later call
     +---------+ ---+                       +---------+ ----+ (no change)
@@ -1741,7 +1746,8 @@ function does not remember them; they describe what it finds and what it does.
 =item UNKNOWN to UNIX_OK or NO_UNIX
 
 Trigger: the first call to C<socket_path> or C<ensure_dir> (or the check in
-F<Makefile.PL>).  Action: try to make a pair of connected unix sockets.  The
+F<Makefile.PL>).  Action: try to name a unix socket (C<pack_sockaddr_un>) and to
+make a pair of connected ones (C<socketpair>).  The
 answer is stored in C<$Class::Shared::UNIX_SOCKETS> and is never asked again.
 
 =item UNIX_OK, no change

@@ -1359,7 +1359,8 @@ where `trim` removes white space from the end only.
 ┌─ UnixSocketProbe ───────────────────────────────────────
 │ cache, cache' : {unknown, yes, no}
 ├─────────────────────────────────────────────────────────
-│ cache = unknown ⇒ cache' ∈ {yes, no}    asked once, by trying socketpair
+│ cache = unknown ⇒ cache' ∈ {yes, no}    asked once, by naming a socket and
+│                                         trying socketpair; both must work
 │ cache ≠ unknown ⇒ cache' = cache        the answer never changes in a run
 └─────────────────────────────────────────────────────────
 ```
@@ -1371,7 +1372,7 @@ the answer to "can this perl make a unix socket?", which is worked out once,
 the first time it is needed, and then never changes.
 
 ```
-            try socketpair() works
+              both tries work
 +---------+ -------------------------> +---------+ <---+
 | UNKNOWN |                            | UNIX_OK |     | every later call
 +---------+ ---+                       +---------+ ----+ (no change)
@@ -1406,7 +1407,8 @@ function does not remember them; they describe what it finds and what it does.
 - UNKNOWN to UNIX\_OK or NO\_UNIX
 
     Trigger: the first call to `socket_path` or `ensure_dir` (or the check in
-    `Makefile.PL`).  Action: try to make a pair of connected unix sockets.  The
+    `Makefile.PL`).  Action: try to name a unix socket (`pack_sockaddr_un`) and to
+    make a pair of connected ones (`socketpair`).  The
     answer is stored in `$Class::Shared::UNIX_SOCKETS` and is never asked again.
 
 - UNIX\_OK, no change

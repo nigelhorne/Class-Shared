@@ -1,6 +1,10 @@
 Revision history for Class-Shared
 
 0.001.0    2026-11-25
+        - Fix: a Windows perl 5.26 was taken to have unix sockets, because it
+          emulates socketpair; the probe now also names a socket.
+        - Fix: on Windows, read_frame with a timeout said "timed out" for a file
+          or pipe.  A file is now read; a pipe is refused with the reason.
         - Fix: a frontend made just after a backend was told to stop could wait
           for the departing one and fail, instead of starting a new one.
 	- New t/transaction.t: the lifecycle of a shared object end to end

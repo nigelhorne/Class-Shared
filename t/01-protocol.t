@@ -1,6 +1,7 @@
 use strict;
 use warnings;
 
+use File::Temp ();
 use Test::More;
 use File::Spec ();
 # The unix socket constants are asked for at run time, not imported: a perl
@@ -192,6 +193,37 @@ SKIP: {
 		like($read_error, qr/failed authentication/, 'for the same reason');
 		is($Shared::Trap::THAWED, $thawed, 'without deserialising it');
 	}
+}
+
+# Windows can wait only on sockets, so a timed read of anything else must not
+# claim that it timed out.  $^O is set to take that path on every platform.
+{
+	my ($bytes) = Class::Shared::Protocol::encode_frame({ op => 'ping' });
+
+	my $file = File::Temp->new;
+	binmode $file;
+	print {$file} $bytes or die "cannot write: $!";
+	close($file) or die "cannot write: $!";
+	open(my $fh, '<:raw', "$file") or die "cannot read: $!";
+
+	pipe(my $reader, my $writer) or die "cannot make a pipe: $!";
+	binmode $reader;
+	binmode $writer;
+	Class::Shared::Protocol::write_all($writer, $bytes);
+
+	local $^O = 'MSWin32';
+
+	my ($message, $error) = Class::Shared::Protocol::read_frame($fh, 0);
+	is_deeply($message, { op => 'ping' }, 'Windows: a timed read of a file reads it')
+		or diag $error;
+	close($fh);
+
+	($message, $error) = Class::Shared::Protocol::read_frame($reader, 0);
+	is($message, undef, 'Windows: a pipe cannot be given a timeout');
+	like($error, qr/\Acannot apply a timeout/, 'and the reason says so');
+
+	($message, $error) = Class::Shared::Protocol::read_frame($reader);
+	is_deeply($message, { op => 'ping' }, 'Windows: without a timeout the pipe is read');
 }
 
 done_testing();

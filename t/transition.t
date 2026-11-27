@@ -105,7 +105,9 @@ my %config = (
 	},
 );
 
-my $tmp = File::Temp->newdir('class-shared-transition-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+# Short on purpose: a socket path must fit in a socket address, and the
+# temporary directory on macOS already takes about half of the room.
+my $tmp = File::Temp->newdir('cstr-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 
 my @children;
 
@@ -113,10 +115,9 @@ END {
 	kill 'TERM', $_ for grep { $_ && kill(0, $_) } @children;
 }
 
+# The name each case passes is for the reader: it is left out of the path.
 sub area {
-	my ($name) = @_;
-
-	return File::Temp->newdir("$name-XXXXXX", DIR => "$tmp", CLEANUP => 1);
+	return File::Temp->newdir('a-XXXXXX', DIR => "$tmp", CLEANUP => 1);
 }
 
 sub wait_until {

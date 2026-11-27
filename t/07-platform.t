@@ -45,6 +45,20 @@ is($@, '', 'a perl that has them is not refused');
 	}
 }
 
+# A Windows perl 5.26 emulates socketpair but cannot name a unix socket, so the
+# probe must try both.  The missing function is stood in for, and the cached
+# answer cleared so that the probe runs again.
+{
+	require Socket;
+
+	local $Class::Shared::UNIX_SOCKETS;
+	no warnings 'redefine';
+	local *Socket::pack_sockaddr_un = sub { die "not implemented on this architecture\n" };
+
+	is(Class::Shared::_has_unix_sockets(), 0,
+		'a perl that cannot name a unix socket has none');
+}
+
 # On a platform that has both, the same calls work: the refusal is about the
 # capability and nothing else.  Whether a directory here can really be made
 # owner-only is asked of Test::Permissions, so this skips on Windows, and on a

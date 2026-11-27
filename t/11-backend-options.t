@@ -105,7 +105,11 @@ like(refused(sub { backend(token => 's3cret') }),
 like(refused(sub { Class::Shared::Backend->new(host => '127.0.0.1', port => 7000) }),
 	qr/needs a token/, 'a TCP listener without a token is still refused');
 
-{
+SKIP: {
+	# A TCP backend keeps its lock and log where the default socket would be.
+	skip 'this perl has no unix sockets, which the default path needs', 1
+		unless Class::Shared::_has_unix_sockets();
+
 	my $tcp = Class::Shared::Backend->new(
 		host => '127.0.0.1', port => 7000, token => 's3cret',
 		tls_cert => 'c.pem', tls_key => 'k.pem', tls_ca => 'ca.pem',

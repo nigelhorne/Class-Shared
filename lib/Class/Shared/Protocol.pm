@@ -146,8 +146,17 @@ sub _read_exact {
 			next;
 		}
 
-		return (undef, 'timed out waiting for a reply')
-			if defined $timeout && !_wait_readable($fh, $timeout);
+		if (defined $timeout) {
+			if (_can_select($fh)) {
+				return (undef, 'timed out waiting for a reply')
+					unless _wait_readable($fh, $timeout);
+			} elsif (!-f $fh) {
+				# A plain file never makes a read wait; anything else might
+				# wait for ever.
+				return (undef, 'cannot apply a timeout: on Windows only a socket '
+					. 'or a plain file can be waited for');
+			}
+		}
 
 		my $got = sysread($fh, $buffer, $length - length($buffer), length($buffer));
 
@@ -161,6 +170,21 @@ sub _read_exact {
 	}
 
 	return ($buffer);
+}
+
+# Purpose:       say whether select can wait on $fh.
+# Entry:         $fh is an open handle.
+# Exit status:   1 if it can, 0 if not.
+# Side effects:  on Windows, loads Socket.
+# Why:           Windows select takes sockets and nothing else.
+sub _can_select {
+	my ($fh) = @_;
+
+	return 1 unless $^O eq 'MSWin32';
+
+	require Socket;
+
+	return defined getsockopt($fh, Socket::SOL_SOCKET(), Socket::SO_TYPE()) ? 1 : 0;
 }
 
 # Purpose:       wait up to $timeout seconds for $fh to have something to read.
@@ -558,6 +582,12 @@ valid image.
 It understands TLS handles: it takes data that TLS has already decrypted before
 it waits for more.
 
+On Windows only a socket can be waited for.  A plain file never makes a read
+wait, so it is read whatever C<$timeout> says.  Any other handle, such as a
+pipe, cannot be given a timeout: C<read_frame> returns C<(undef, $error)> with
+an error that begins C<cannot apply a timeout>, without reading.  Give no
+timeout to read such a handle.
+
 B<Side effects:> reads from the handle.  After an error the handle may be half
 way through a frame, so close it.
 
@@ -587,6 +617,10 @@ way through a frame, so close it.
     header at MAX_FRAME + 1  any                   (undef, exceeds the limit)
     timeout 0, no data       empty pipe            (undef, timed out)
     peer closed              empty pipe            (undef, closed by peer)
+    Windows, timeout, file   a whole frame         (message, undef)
+    Windows, timeout, pipe   anything              (undef, cannot apply ...)
+
+    The "empty pipe" rows with a timeout do not apply on Windows.
 
     Boundary values: a header of exactly MAX_FRAME is accepted as a length and
     fails only when the body cannot be read; MAX_FRAME + 1 is refused before
@@ -855,6 +889,8 @@ plain ASCII.  A short key:
     │ k? ≠ ⊥ ∧ ¬ digest_ok(k?, body) ⇒ out! = (⊥, "frame failed authentication")
     │ end of stream before 4 + n bytes ⇒ out! = (⊥, "connection closed by peer")
     │ no data within t? seconds        ⇒ out! = (⊥, "timed out waiting for a reply")
+    │ Windows ∧ t? ≠ ⊥ ∧ the handle is neither a socket nor a plain file
+    │                                  ⇒ out! = (⊥, "cannot apply a timeout")
     │ digest_ok is checked BEFORE thaw is applied
     └─────────────────────────────────────────────────────────
 
