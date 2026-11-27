@@ -49,6 +49,7 @@ t/domain.t
 t/edge_cases.t
 t/function.t
 t/integration.t
+t/lib/LateWrite.pm
 t/lib/Shared/Cities.pm
 t/lib/Shared/Command.pm
 t/lib/Shared/Conjunction.pm

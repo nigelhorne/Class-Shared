@@ -585,7 +585,19 @@ sub _roundtrip {
 	}
 
 	my ($ok, $write_error) = Class::Shared::Protocol::write_all($sock, $bytes);
-	return (undef, $write_error) unless $ok;
+	if (!$ok) {
+		# A full backend says so and closes without waiting for the hello, so
+		# the write can fail with its refusal already here to be read.  Nothing
+		# but a refusal counts: a request that was not sent has no other answer.
+		# The timeout is 0 because a backend sends it before it closes, and a
+		# write can fail for other reasons with nothing on the way.
+		if (($message->{op} || '') eq 'hello') {
+			my ($refusal) = Class::Shared::Protocol::read_frame($sock, 0, $self->{token});
+			return ($refusal) if ref($refusal) eq 'HASH' && !$refusal->{ok};
+		}
+
+		return (undef, $write_error);
+	}
 
 	my ($response, $read_error)
 		= Class::Shared::Protocol::read_frame($sock, $wait, $self->{token});

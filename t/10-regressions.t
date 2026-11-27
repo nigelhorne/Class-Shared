@@ -431,6 +431,67 @@ for my $words ("start -f --listen tcp:127.0.0.1:1", 'status --host 127.0.0.1 --p
 	$frontend->shared_shutdown if $frontend;
 }
 
+# ------------------------------------------------ a full backend, written late
+
+# A full backend says "busy" and closes without waiting for the hello.  A client
+# that writes after that has its write refused, and used to report the broken
+# pipe, leaving the reply that explains it unread.
+{
+	require LateWrite;
+	no warnings 'once';    # $LateWrite::DELAY is only known at run time
+
+	my $full_dir = tempdir(CLEANUP => 1);
+	local $ENV{Class__Shared__Backend__max_clients} = 1;
+
+	my $holder = Class::Shared::Frontend->new('Shared::Counter', dir => $full_dir);
+
+	{
+		local $LateWrite::DELAY = 0.5;
+
+		for my $autostart (0, 1) {
+			my $got = eval {
+				Class::Shared::Frontend->new('Shared::Counter',
+					dir => $full_dir, autostart => $autostart);
+				1;
+			};
+
+			ok(!$got, "a full backend refuses a late hello (autostart $autostart)");
+			is($@, "Class::Shared: backend is serving too many clients (1)\n",
+				'  and says that it is full');
+		}
+	}
+
+	{
+		local $ENV{LATE_WRITE} = 0.5;
+
+		my $out = qx{$^X -Ilib -It/lib -MLateWrite bin/class-shared status --dir $full_dir 2>&1};
+
+		isnt($?, 0, 'class-shared status fails on a full backend');
+		like($out, qr/backend is serving too many clients \(1\)/, '  and says that it is full');
+	}
+
+	$holder->shared_shutdown;
+}
+
+# Looking for that reply must not wait: a write can also fail while the other
+# end is still there and has nothing to say.
+{
+	my $silent_dir = tempdir(CLEANUP => 1);
+	my $path = Class::Shared::socket_path($silent_dir);
+	my $listener = IO::Socket::UNIX->new(Local => $path, Listen => 1)
+		or die "cannot listen on $path: $!";
+
+	no warnings 'redefine';
+	local *Class::Shared::Protocol::write_all = sub { return (0, 'write failed: refused') };
+
+	my $started = Time::HiRes::time();
+	eval { Class::Shared::Frontend->new('Shared::Counter', socket => $path, autostart => 0, timeout => 30) };
+	my $elapsed = Time::HiRes::time() - $started;
+
+	like($@, qr/handshake failed: write failed: refused/, 'a failed write is reported');
+	cmp_ok($elapsed, '<', 10, "  without waiting for a reply ($elapsed s)");
+}
+
 is($counter->shared_shutdown, 1, 'the backend shuts down on request');
 is($counter->shared_shutdown, 0, 'and a repeated shutdown is a no-op');
 

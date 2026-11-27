@@ -501,7 +501,11 @@ subtest 'State: ACCEPTED -> Trigger: max_clients reached -> State: DROPPED' => s
 	ask($first, hello());
 
 	my $second = connect_raw($socket) or BAIL_OUT("cannot connect: $!");
-	my $refused = ask($second, hello('Shared::Counter'));
+	# The backend refuses and closes without waiting for the hello, so on a
+	# loaded machine this write finds the socket closed.  The reply is there
+	# to be read either way.
+	Class::Shared::Protocol::write_all($second, frame(hello('Shared::Counter')));
+	my ($refused) = Class::Shared::Protocol::read_frame($second, $config{timeout});
 	is($refused->{ok}, 0, 'the client over the limit is refused');
 	is($refused->{kind}, 'busy', 'as busy');
 

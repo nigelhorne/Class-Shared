@@ -421,7 +421,17 @@ sub exchange {
 	return (undef, "cannot encode the request: $encode_error") unless defined $bytes;
 
 	my ($ok, $write_error) = Class::Shared::Protocol::write_all($sock, $bytes);
-	return (undef, "cannot send the request: $write_error") unless $ok;
+	if (!$ok) {
+		# A full backend says so and closes without waiting for the hello, so
+		# the write can fail with its refusal already here to be read.  Do not
+		# wait for one: a write can fail with nothing on the way.
+		if ($request->{op} eq 'hello') {
+			my ($refusal) = Class::Shared::Protocol::read_frame($sock, 0, $secret);
+			return ($refusal) if ref($refusal) eq 'HASH' && !$refusal->{ok};
+		}
+
+		return (undef, "cannot send the request: $write_error");
+	}
 
 	my ($response, $read_error) = Class::Shared::Protocol::read_frame($sock, undef, $secret);
 	return (undef, "cannot read the response: $read_error") unless defined $response;
