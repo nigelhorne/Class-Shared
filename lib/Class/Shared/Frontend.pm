@@ -658,24 +658,9 @@ sub _spawn_backend {
 	}
 
 	# A backend that is running but slow to answer is waited for, not replaced.
-	if ($state ne 'running') {
-		my $pid = fork;
-		if (!defined $pid) {
-			$self->{last_error} = "fork failed: $!";
-			$self->_close($lock, $lock_path);
-			return undef;
-		}
-
-		if ($pid == 0) {
-			$self->_exec_backend($lock);
-			# not reached
-		}
-
-		# The first child only forks the daemon and exits; waiting for it stops it
-		# being left as a zombie.  Its status says nothing about the backend, which
-		# is judged by whether it answers below, and waitpid fails harmlessly when
-		# SIGCHLD is ignored.
-		waitpid($pid, 0);
+	if ($state ne 'running' && !$self->_fork_backend($lock)) {
+		$self->_close($lock, $lock_path);
+		return undef;
 	}
 
 	my $deadline = time + $self->{timeout};
@@ -692,6 +677,17 @@ sub _spawn_backend {
 			$sock = $greeted;
 			last;
 		}
+
+		# A backend that is stopping removes its socket before it releases its
+		# lock.  Once the lock is free nobody is coming back to answer, so one
+		# has to be started after all.
+		if ($state eq 'running') {
+			$state = $self->_remove_stale($path);
+			last unless $state;
+			if ($state ne 'running' && !$self->_fork_backend($lock)) {
+				last;
+			}
+		}
 		Class::Shared::poll_pause();
 	}
 
@@ -699,9 +695,37 @@ sub _spawn_backend {
 
 	$self->{last_error} = "a backend is running at $path but did not answer: "
 		. ($self->{last_error} // 'no reason was given')
-		if !$sock && $state eq 'running';
+		if !$sock && ($state // '') eq 'running';
 
 	return $sock;
+}
+
+# Purpose:       start one backend in the background.
+# Entry:         the spawn lock is held on $lock.
+# Exit status:   1 once it has been started (not once it is ready), 0 with
+#                last_error set if it could not be.
+# Side effects:  forks, and waits for the intermediate child.
+sub _fork_backend {
+	my ($self, $lock) = @_;
+
+	my $pid = fork;
+	if (!defined $pid) {
+		$self->{last_error} = "fork failed: $!";
+		return 0;
+	}
+
+	if ($pid == 0) {
+		$self->_exec_backend($lock);
+		# not reached
+	}
+
+	# The first child only forks the daemon and exits; waiting for it stops it
+	# being left as a zombie.  Its status says nothing about the backend, which
+	# is judged by whether it answers, and waitpid fails harmlessly when
+	# SIGCHLD is ignored.
+	waitpid($pid, 0);
+
+	return 1;
 }
 
 # Purpose:       remove the socket a dead backend left, and only that.

@@ -158,6 +158,11 @@ subtest 'a frontend starts a backend and several frontends share it' => sub {
 
 	# Leaving takes only your own object away.
 	$second->shared_close;
+	# The backend learns of the close from its own loop, so it may answer this
+	# frontend before it has dealt with that one.
+	my $deadline = time + 5;
+	Class::Shared::poll_pause()
+		while $first->shared_status->{objects} != 2 && time < $deadline;
 	is($first->shared_status->{objects}, 2, 'a closed frontend\'s object is gone');
 	is($third->value, 1006, 'the others carry on');
 

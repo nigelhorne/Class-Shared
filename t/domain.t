@@ -530,7 +530,8 @@ subtest 'ensure_dir: permission boundaries' => sub {
 			sprintf('mode %04o gives the documented reason', $mode));
 	}
 
-	my $wide = File::Spec->catdir("$tmp", "\x{fc}\x{df}");
+	# Given as UTF-8 bytes: macOS refuses a file name that is not valid UTF-8.
+	my $wide = File::Spec->catdir("$tmp", "\xc3\xbc\xc3\x9f");
 	($ok, $why) = Class::Shared::ensure_dir($wide);
 	is($ok, 1, 'a multibyte directory name is created');
 	ok(-d $wide, 'and exists without character corruption');

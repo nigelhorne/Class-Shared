@@ -1,6 +1,11 @@
 Revision history for Class-Shared
 
 0.001.0    2026-11-25
+        - Fix: a frontend made just after a backend was told to stop could wait
+          for the departing one and fail, instead of starting a new one.
+	- New t/transaction.t: the lifecycle of a shared object end to end
+	  (attach, calls, shutdown), a reply lost after the request was written,
+	  and a socket path swapped by another process between validation and use.
 	- New: t/path.t walks every path through the routines of the four modules,
 	  forcing the branches a caller cannot reach with Test::Mockingbird and
 	  checking the outputs with Test::Returns.  Path analysis found one branch

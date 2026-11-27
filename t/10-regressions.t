@@ -399,7 +399,40 @@ for my $words ("start -f --listen tcp:127.0.0.1:1", 'status --host 127.0.0.1 --p
 	like($out, qr/either --socket or/, 'and is refused');
 }
 
-$counter->shared_shutdown;
+# ------------------------------------------------ a backend that is leaving
+
+# A backend removes its socket before it releases its lock.  A frontend that
+# looks in between must start a backend once the lock is free, not go on
+# waiting for the one that has gone.
+{
+	my $leaving_dir = tempdir(CLEANUP => 1);
+	my $lock_path = Class::Shared::socket_path($leaving_dir) . '.owner';
+
+	pipe(my $from, my $to) or die "cannot make a pipe: $!";
+	my $pid = fork;
+	die "cannot fork: $!" unless defined $pid;
+	if (!$pid) {
+		close($from);
+		open(my $lock, '>>', $lock_path) or POSIX::_exit(2);
+		flock($lock, 2) or POSIX::_exit(2);    # LOCK_EX
+		syswrite($to, "locked\n");
+		select(undef, undef, undef, 0.5);
+		POSIX::_exit(0);
+	}
+	close($to);
+	is(scalar <$from>, "locked\n", 'a departing backend holds its lock');
+
+	my $frontend = eval {
+		Class::Shared::Frontend->new('Shared::Counter', dir => $leaving_dir, timeout => 5);
+	};
+	ok($frontend, 'a backend is started when the lock is released') or diag $@;
+	waitpid($pid, 0);
+
+	$frontend->shared_shutdown if $frontend;
+}
+
+is($counter->shared_shutdown, 1, 'the backend shuts down on request');
+is($counter->shared_shutdown, 0, 'and a repeated shutdown is a no-op');
 
 ok(!-e $counter->shared_socket_path || !-S $counter->shared_socket_path,
 	'the backend that did own the socket still removes it when it stops');

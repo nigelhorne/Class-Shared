@@ -4175,6 +4175,22 @@ subtest 'Class::Shared::Backend::_op_new' => sub {
 	is(scalar(keys %{ $backend->{objects} }), 0, 'and neither is kept');
 	is($backend->{constructed}, 0, 'or counted');
 
+	# A refused construction takes no slot: a backend with room for one object
+	# still accepts the next one, under the first id.
+	{
+		my $limited = make_backend(max_objects => 1);
+		my $limited_client = { class => 'Test::Held', serial => 9, objects => {} };
+
+		is($limited->_op_new($limited_client, { args => ['die'] })->{ok}, 0,
+			'a constructor that dies does not take the one object there is room for');
+
+		my $accepted = $limited->_op_new($limited_client, {});
+		is_deeply([@{$accepted}{qw(ok id)}], [1, 1],
+			'so the next construction still gets the first object id');
+		is_deeply([sort { $a <=> $b } keys %{ $limited->{objects} }], [1],
+			'and only that object is held');
+	}
+
 	# $@ left over from earlier is not a failure of this constructor.
 	{
 		local $@ = 'stale';
