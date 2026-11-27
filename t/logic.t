@@ -955,7 +955,8 @@ subtest 'ReadFrame: room = MAXFRAME + (32 if secret != bottom)' => sub {
 		my $stream = pack('N', $length) . ('x' x $length);
 		my $path = write_bytes("readframe-" . ($length), $stream);
 		open(my $fh, '<:raw', $path) or die "cannot read $path: $!";
-		my ($message, $error) = Class::Shared::Protocol::read_frame($fh, 0, $secret);
+		# No timeout: select cannot wait on a file on every platform.
+		my ($message, $error) = Class::Shared::Protocol::read_frame($fh, undef, $secret);
 		close($fh);
 
 		is($message, undef, "$name: no message");

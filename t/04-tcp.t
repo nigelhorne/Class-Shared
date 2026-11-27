@@ -316,6 +316,52 @@ if ($certless) {
 	pass('and so gets no reply') for 1 .. 1;
 }
 
+# A TLS client whose handshake has finished and which has not greeted yet is in
+# AWAITING HELLO: the first frame it sends has to be the hello, and it is told
+# so rather than being dropped or served.  The hello then still works on the
+# same connection, so the refused request changed nothing.
+{
+	my $early = IO::Socket::SSL->new(
+		PeerAddr        => '127.0.0.1',
+		PeerPort        => $port,
+		Proto           => 'tcp',
+		Timeout         => 5,
+		SSL_ca_file     => $pem{ca},
+		SSL_cert_file   => $pem{client},
+		SSL_key_file    => $pem{'client-key'},
+		SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_PEER(),
+	) or BAIL_OUT('cannot open a verified TLS connection for the early request');
+
+	my ($request) = Class::Shared::Protocol::encode_frame({ op => 'new', args => [] },
+		's3cret-token');
+	my ($sent) = Class::Shared::Protocol::write_all($early, $request);
+	ok($sent, 'a request before the hello is sent over TLS');
+
+	my ($refused, $refused_error) = Class::Shared::Protocol::read_frame($early, 5, 's3cret-token');
+	ok($refused, 'the backend answers it') or diag $refused_error;
+
+	if ($refused) {
+		is($refused->{kind}, 'protocol', 'as a protocol failure');
+		is($refused->{error}, 'handshake required',
+			'because a finished TLS handshake leaves the client AWAITING HELLO');
+
+		my ($hello) = Class::Shared::Protocol::encode_frame({
+			op    => 'hello',
+			proto => $Class::Shared::PROTOCOL_VERSION,
+			class => 'Shared::Counter',
+		}, 's3cret-token');
+		Class::Shared::Protocol::write_all($early, $hello);
+
+		my ($greeted) = Class::Shared::Protocol::read_frame($early, 5, 's3cret-token');
+		ok($greeted && $greeted->{ok},
+			'and the hello on the same connection is accepted');
+		is($greeted->{class}, 'Shared::Counter', 'so the refused request changed no state')
+			if $greeted;
+	}
+
+	close $early;
+}
+
 # A frame this backend cannot authenticate must be refused before it is thawed.
 # The bodies below are valid Storable images, so the digest is the only thing
 # between them and the backend's interpreter.

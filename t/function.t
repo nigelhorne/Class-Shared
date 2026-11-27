@@ -17,6 +17,19 @@ use strict;
 use warnings;
 
 use Test::Most;
+
+# Much of this file needs what only a Unix-like system has.  Windows perls can
+# say they have unix sockets, so the directory is asked about as well.
+BEGIN {
+	require Test::Needs;
+	Test::Needs::test_needs('Test::Permissions');
+	require Class::Shared;
+
+	plan skip_all => 'a backend needs unix sockets in an owner-only directory, '
+		. 'which this perl cannot provide (Class::Shared is Unix-only)'
+		unless Class::Shared::_has_unix_sockets()
+			&& Test::Permissions::can_revoke_create();
+}
 use Test::Needs;
 
 BEGIN {

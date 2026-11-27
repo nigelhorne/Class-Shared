@@ -62,3 +62,4 @@ t/lib/Shared/Reaper.pm
 t/lib/Shared/Tally.pm
 t/pod-synopsis.t
 t/transaction.t
+t/transition.t
