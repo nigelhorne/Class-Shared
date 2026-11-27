@@ -28,6 +28,21 @@ talk to a backend running elsewhere.
 NOTICE
 }
 
+# Every package this distribution provides, with the version parsed from its
+# own file, so META.json and PAUSE agree even if one file is bumped alone.
+my %provides_source = (
+	'Class::Shared'           => 'lib/Class/Shared.pm',
+	'Class::Shared::Backend'  => 'lib/Class/Shared/Backend.pm',
+	'Class::Shared::Frontend' => 'lib/Class/Shared/Frontend.pm',
+	'Class::Shared::Protocol' => 'lib/Class/Shared/Protocol.pm',
+);
+my %provides = map {
+	$_ => {
+		file    => $provides_source{$_},
+		version => MM->parse_version($provides_source{$_}),
+	}
+} sort keys %provides_source;
+
 my $dist = {
 	COMPRESS => 'gzip -9f',	# Compress tarball using gzip
 	SUFFIX => 'gz',	# File suffix for tarball
@@ -50,24 +65,29 @@ WriteMakefile(
 	clean		=> { FILES => 'Class-Shared-*' },
 	EXE_FILES        => ['bin/class-shared'],
 	PREREQ_PM        => {
+		'Carp'             => 0,
 		'Digest::SHA'      => 0,
 		'File::Basename'   => 0,
 		'File::Spec'       => 0,
 		'Fcntl'            => 0,
 		'Getopt::Long'     => 0,
+		'IO::Socket::INET' => 0,
 		'IO::Socket::UNIX' => 0,
 		'Log::Abstraction' => '0.41',
 		'Object::Configure' => '0.26',
 		'Params::Get'      => '0.17',
 		'Params::Validate::Strict' => '0.43',
 		'POSIX'            => 0,
+		'Scalar::Util'     => 0,
 		'Socket'           => 0,
 		'Storable'         => 0,
 		'Time::HiRes'      => 0,
+		'version'          => 0,
 	}, TEST_REQUIRES    => {
 		'File::Temp'          => 0,
 		'IO::Socket::SSL'     => 0,
 		'Lingua::Conjunction' => 0,
+		'Net::SSLeay'         => 0,
 		'Test::DescribeMe' => 0,
 		'Test::Memory::Cycle' => 0,
 		'Test::Mockingbird'   => 0,
@@ -82,6 +102,7 @@ WriteMakefile(
 		'meta-spec' => {
 			version => 2,
 		},
+		provides => \%provides,
 		prereqs => {
 			runtime => {
 				# Loaded only when a TCP listener or client is used;
@@ -101,15 +122,20 @@ WriteMakefile(
 			},
 			develop => {
 				requires => {
+					'Devel::Cover'        => 0,
+					'Perl::Critic'        => 0,
 					# Needed only to regenerate README.md from the POD.
-					'Pod::Github' => '0.04',
+					'Pod::Github'         => '0.04',
+					'Test::Pod'           => 0,
+					'Test::Pod::Coverage' => 0,
+					'Test::Synopsis'      => 0,
 				},
 			},
 		}, resources => {
 			homepage => 'https://metacpan.org/pod/Class::Shared',
 			repository => {
 				type => 'git',
-				url => 'git://github.com/nigelhorne/Class-Shared.git',
+				url => 'https://github.com/nigelhorne/Class-Shared.git',
 				web => 'https://github.com/nigelhorne/Class-Shared',
 				# license => 'http://dev.perl.org/licenses/',
 			}, bugtracker => {

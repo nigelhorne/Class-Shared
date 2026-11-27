@@ -21,7 +21,9 @@ use Params::Validate::Strict ();
 use Class::Shared ();
 use Class::Shared::Protocol ();
 
-our $VERSION = '0.001.0';
+# version->declare here alone: this is VERSION_FROM, and with it MakeMaker
+# writes 0.001.0 into META; a plain dotted string becomes v0.001.0 there.
+use version; our $VERSION = version->declare('0.001.0');
 
 our $DEFAULT_MAX_CLIENTS = 128;
 our $DEFAULT_MAX_OBJECTS = 4096;
@@ -383,6 +385,11 @@ sub _validate {
 
 sub run {
 	my $self = shift;
+
+	# A backend object is one life.  After a normal stop the socket, pid file
+	# and lock have already been given back, so running again would bind a new
+	# socket that the finished cleanup would never remove.
+	die "this backend has already run and stopped\n" if $self->{cleaned};
 
 	$self->_daemonize if $self->{daemonize};
 
@@ -1377,6 +1384,12 @@ sub _dispatch {
 sub _op_hello {
 	my ($self, $client, $message) = @_;
 
+	# One hello per connection.  A second would change the class of a
+	# connection that may already hold objects, leaving them of a class the
+	# connection no longer names.
+	return _failure('protocol', 'hello has already been accepted on this connection')
+		if $client->{greeted};
+
 	# Compared as text, not as a number.  As a number, "2x" or " 2" would pass
 	# as 2 (and "x" would warn), and a reference would be compared by its
 	# address.  The version is written the one way, so only that way is
@@ -2169,7 +2182,9 @@ It stops when it receives C<SIGTERM> or C<SIGINT>, or when a client sends the
 C<shutdown> request (for example C<class-shared stop>).  C<SIGHUP> and
 C<SIGPIPE> are ignored.
 
-Returns 0 after a normal stop.
+Returns 0 after a normal stop.  A backend object is one life: calling C<run>
+again after it has stopped dies with C<this backend has already run and
+stopped>.  Make a new object to serve again.
 
 B<Background mode.> When C<daemonize> is true, C<run> forks twice.  The process
 that called it B<exits with status 0> as soon as the first fork has finished, so
@@ -3223,7 +3238,8 @@ closed; no object was ever made.
 
 Trigger: a C<hello> with the right protocol version and a valid, loadable class
 (or no class).  Action: the class is loaded once (if new) and the connection is
-marked greeted.
+marked greeted.  A further C<hello> on a greeted connection is refused with a
+C<protocol> failure and changes nothing.
 
 =item GREETED to GREETED
 
@@ -3245,6 +3261,11 @@ as a drop.)
 =head1 LICENSE
 
 This module is free software; you can redistribute it and/or modify it under
-the same terms as Perl itself.
+the terms of the GNU General Public License, version 2, as published by the
+Free Software Foundation.
+
+This module is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the F<LICENSE> file for the full text.
 
 =cut

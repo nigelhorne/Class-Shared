@@ -49,9 +49,6 @@ t/domain.t
 t/edge_cases.t
 t/function.t
 t/integration.t
-t/logic.t
-t/path.t
-t/unit.t
 t/lib/Shared/Cities.pm
 t/lib/Shared/Command.pm
 t/lib/Shared/Conjunction.pm
@@ -60,6 +57,11 @@ t/lib/Shared/Factory.pm
 t/lib/Shared/Page.pm
 t/lib/Shared/Reaper.pm
 t/lib/Shared/Tally.pm
+t/logic.t
+t/path.t
+t/pod-coverage.t
 t/pod-synopsis.t
+t/pod.t
 t/transaction.t
 t/transition.t
+t/unit.t

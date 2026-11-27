@@ -324,9 +324,9 @@ subtest 'State: CORRUPT -> Trigger: another frame -> State: EMPTY' => sub {
 	my @rejected = Class::Shared::Protocol::take_frame(\$buffer, $secret);
 	is($rejected[0], -1, 'the corrupt frame is rejected');
 
-	# TODO: FSM Discrepancy - Protocol: the STATE DIAGRAM makes CORRUPT terminal
-	# ("close the connection"), but the frame is removed and the next take_frame
-	# call accepts the following frame, so CORRUPT -> EMPTY is reachable.
+	# COMPLETE to CORRUPT removes the bad frame, so bytes after it stay
+	# buffered.  The POD says to close rather than call again; this is what a
+	# caller that ignored that would see.
 	my @accepted = Class::Shared::Protocol::take_frame(\$buffer, $secret);
 	is($accepted[0], 1, 'the frame after a corrupt one is accepted, as the code allows');
 	is_deeply($accepted[1], { op => 'ping' }, 'and decoded');
@@ -439,17 +439,20 @@ subtest 'State: GREETED -> Trigger: a second hello -> State: GREETED' => sub {
 	ask($client, hello('Shared::Counter'));
 
 	my $again = ask($client, hello('Shared::Tally'));
-	is($again->{ok}, 1, 'a second hello is accepted on a GREETED connection');
+	is($again->{ok}, 0, 'a second hello is refused on a GREETED connection');
+	is($again->{kind}, 'protocol', 'as a protocol failure');
+	like($again->{error}, qr/already been accepted/, 'saying the connection is already greeted');
 
-	my $made = ask($client, { op => 'new', args => [] });
-	is($made->{class}, 'Shared::Tally', 'and the class of the connection has changed');
+	my $made = ask($client, { op => 'new', args => [start => 2] });
+	is($made->{ok}, 1, 'new still works');
+	is($made->{class}, 'Shared::Counter', 'and the class of the connection has not changed');
 
-	# TODO: FSM Discrepancy - Backend client: the diagram lists only new, call
-	# and ping as GREETED -> GREETED triggers, but a second hello is accepted
-	# and replaces the connection's class, which no edge in the diagram shows.
 	my $call = ask($client, { op => 'call', id => $made->{id}, method => 'value', want => 'scalar' });
-	is($call->{ok}, 0, 'the old class is gone, so its methods are too');
-	like($call->{error}, $config{error}{no_method}, 'which the old class would have answered');
+	is($call->{ok}, 1, 'the original class is still the one in use');
+	is($call->{result}[0], 2, 'and its methods answer');
+
+	my $ping = ask($client, { op => 'ping' });
+	is($ping->{ok}, 1, 'the connection is still GREETED');
 
 	close($client);
 	stop_backend($pid, $socket);
@@ -717,7 +720,7 @@ subtest 'State: STARTING -> Trigger: path is not a socket -> State: FAILED' => s
 	ok(!-e "$socket$config{pid_suffix}", 'and no pid file was written');
 };
 
-subtest 'State: STOPPED -> Trigger: run again -> State: SERVING' => sub {
+subtest 'State: STOPPED -> Trigger: run again -> State: STOPPED' => sub {
 	my $area = area('restart');
 	my $socket = "$area/$config{socket_name}";
 	my $report = "$area/report";
@@ -743,9 +746,12 @@ subtest 'State: STOPPED -> Trigger: run again -> State: SERVING' => sub {
 			alarm 0;
 			1;
 		};
+		my $error = $@ || '';
+		$error =~ s/\s+\z//;
 
 		open(my $out, '>', $report) or POSIX::_exit(9);
-		print {$out} ($returned ? 'returned' : 'hung'), ' socket=', (-S $socket ? 1 : 0), "\n";
+		print {$out} ($returned ? 'returned' : 'died'), ' socket=', (-S $socket ? 1 : 0),
+			' error=', $error, "\n";
 		close($out);
 		POSIX::_exit(0);
 	}
@@ -761,12 +767,9 @@ subtest 'State: STOPPED -> Trigger: run again -> State: SERVING' => sub {
 	ok(wait_until(sub { -e $report }), 'the backend reached STOPPED and tried again');
 
 	my $said = read_file($report);
-	like($said, qr/\Areturned\b/, 'a second run() returns instead of hanging');
-
-	# TODO: FSM Discrepancy - Backend: the diagram has no edge out of STOPPED,
-	# but run() on the stopped object binds a new socket; cleanup does not run
-	# again (it is marked done), so the socket is left on disk.
-	like($said, qr/socket=1/, 'and leaves a socket behind, which the diagram does not allow');
+	like($said, qr/\Adied\b/, 'a second run() dies instead of serving');
+	like($said, qr/socket=0/, 'and leaves no socket behind');
+	like($said, qr/already run and stopped/, 'saying the backend has already stopped');
 
 	waitpid($pid, 0);
 	unlink($socket);

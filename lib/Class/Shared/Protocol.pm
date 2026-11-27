@@ -965,13 +965,20 @@ start of the next frame (so the state may be HEADER or PARTIAL instead).
 
 Trigger: the digest is wrong, or the body is not a valid image.  Action: return
 C<(-1, undef, $error)>.  The frame is removed from the buffer without being
-thawed (if the digest was wrong).  The caller should close the connection.
+thawed (if the digest was wrong).  Because the frame has been consumed, any
+bytes after it are still buffered and another call would parse them; close the
+connection instead of calling again.
 
 =back
 
 =head1 LICENSE
 
 This module is free software; you can redistribute it and/or modify it under
-the same terms as Perl itself.
+the terms of the GNU General Public License, version 2, as published by the
+Free Software Foundation.
+
+This module is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the F<LICENSE> file for the full text.
 
 =cut

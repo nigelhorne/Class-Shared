@@ -2,20 +2,24 @@
 
 requires 'perl', '5.026';
 
+requires 'Carp';
 requires 'Digest::SHA';
 requires 'Fcntl';
 requires 'File::Basename';
 requires 'File::Spec';
 requires 'Getopt::Long';
+requires 'IO::Socket::INET';
 requires 'IO::Socket::UNIX';
 requires 'Log::Abstraction', '0.41';
 requires 'Object::Configure', '0.26';
 requires 'POSIX';
 requires 'Params::Get', '0.17';
 requires 'Params::Validate::Strict', '0.43';
+requires 'Scalar::Util';
 requires 'Socket';
 requires 'Storable';
 requires 'Time::HiRes';
+requires 'version';
 recommends 'IO::Socket::SSL', '2.0';
 
 on 'configure' => sub {
@@ -26,6 +30,7 @@ on 'test' => sub {
 	requires 'File::Temp';
 	requires 'IO::Socket::SSL';
 	requires 'Lingua::Conjunction';
+	requires 'Net::SSLeay';
 	requires 'Test::DescribeMe';
 	requires 'Test::Memory::Cycle';
 	requires 'Test::Mockingbird';
@@ -46,4 +51,5 @@ on 'develop' => sub {
 	requires 'Pod::Github', '0.04';
 	requires 'Test::Pod';
 	requires 'Test::Pod::Coverage';
+	requires 'Test::Synopsis';
 };

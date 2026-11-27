@@ -1907,6 +1907,11 @@ and destroys every object).
 =head1 LICENSE
 
 This module is free software; you can redistribute it and/or modify it under
-the same terms as Perl itself.
+the terms of the GNU General Public License, version 2, as published by the
+Free Software Foundation.
+
+This module is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the F<LICENSE> file for the full text.
 
 =cut

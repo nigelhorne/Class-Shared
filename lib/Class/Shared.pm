@@ -1786,9 +1786,15 @@ write to it.  Action: return C<(0, $reason)>.
 
 Copyright 2026 Nigel Horne.
 
-Usage is subject to the GPL2 licence terms.
-If you use it,
-please let me know.
+Class::Shared is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License, version 2, as published by the
+Free Software Foundation.
+
+Class::Shared is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.  See the F<LICENSE> file for the full text.
+
+If you use it, please let me know.
 
 =cut
 
