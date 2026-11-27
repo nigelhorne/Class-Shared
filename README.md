@@ -1146,6 +1146,8 @@ one.
 
 ## See Also
 
+- [Test Dashboard](https://nigelhorne.github.io/Class-Shared/coverage/)
+
 [Class::Shared::Frontend](https://metacpan.org/pod/Class%3A%3AShared%3A%3AFrontend), [Class::Shared::Backend](https://metacpan.org/pod/Class%3A%3AShared%3A%3ABackend),
 [Class::Shared::Protocol](https://metacpan.org/pod/Class%3A%3AShared%3A%3AProtocol), [class-shared](https://metacpan.org/pod/class-shared).
 

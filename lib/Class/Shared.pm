@@ -1505,6 +1505,12 @@ one.
 
 =head1 SEE ALSO
 
+=over 4
+
+=item * L<Test Dashboard|https://nigelhorne.github.io/Class-Shared/coverage/>
+
+=back
+
 L<Class::Shared::Frontend>, L<Class::Shared::Backend>,
 L<Class::Shared::Protocol>, L<class-shared>.
 

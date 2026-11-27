@@ -66,7 +66,9 @@ my %config = (
 	},
 );
 
-my $tmp = File::Temp->newdir('class-shared-transaction-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+# Short on purpose: a socket path may be at most 100 characters, and the
+# temporary directory on macOS already takes about half of that.
+my $tmp = File::Temp->newdir('cst-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 
 my @daemons;    # backends an autostart started, so a failed subtest leaks none
 
