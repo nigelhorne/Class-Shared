@@ -19,9 +19,10 @@
 # ACCEPTED -> HANDSHAKING by "a real client connects while silent clients are
 # mid-handshake" and "a silent client holds a slot while its handshake is
 # pending"; HANDSHAKING -> AWAITING HELLO by "a request before the hello is
-# refused" (a TLS connection whose handshake has finished and which has not
-# greeted); HANDSHAKING -> DROPPED by "a client with no certificate gets no
-# reply" and "and loses it once its handshake deadline passes".  The deadline
+# sent over TLS" and "... leaves the client AWAITING HELLO" (a TLS connection
+# whose handshake has finished and which has not greeted); HANDSHAKING ->
+# DROPPED by "a client with no certificate gets no reply" and "and loses it
+# once its handshake deadline passes".  The deadline
 # is also asserted in this file, on a client record marked handshaking.  Every
 # unix edge and every edge after the handshake is proved here.
 #
