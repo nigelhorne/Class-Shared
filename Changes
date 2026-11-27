@@ -26,8 +26,9 @@ Revision history for Class-Shared
         - Frontend new() now dies if given both token and token_file.
         - New t/data-flow.t.
         - New t/domain.t: equivalence partitioning and boundary value analysis
-          for every public parameter, and the domains it tests are now listed
-          in each function's API SPECIFICATION.
+          for the functions of Class::Shared and Class::Shared::Protocol and the
+          option checks of Frontend new().  Their domains are now listed under
+          API SPECIFICATION.  Class::Shared::Backend is not covered.
         - New t/logic.t: the Z schemas proved as truth tables, invariants and
           contradiction traps, including an exhaustive check of the CLASSNAME
           grammar and a byte-level proof of the frame layout.

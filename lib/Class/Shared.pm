@@ -1069,11 +1069,9 @@ directory> if it is too long.
     length 0 or undef  ""               dies
 
     Boundary values: 100 is accepted and 101 dies; 0 and undef die.  The limit
-    is 100 characters, not bytes, and is below the operating system's, which
-    counts bytes.  A path of ASCII characters that is accepted therefore fits.
-    A multibyte path is counted in characters and returned unchanged, so one
-    that is accepted can still be too long for the operating system, which
-    then cuts it short.  See L</ENCODING>.
+    is 100 characters and is below the operating system's.  A multibyte path is
+    counted in characters and returned unchanged.  This function does not check
+    that a socket can use its characters: see L</ENCODING>.
 
 =head4 Output
 
@@ -1234,8 +1232,11 @@ Both sides would then fail to agree, and the connection is refused.
 Paths (C<dir>, C<socket>, C<log>, certificate files) are handed to the operating
 system as they are.  Non-ASCII names work if every program uses the same bytes,
 but they are not tested here.  The 100 character limit on a socket path counts
-characters, not bytes, so a name with many non-ASCII characters can still be
-too long for the operating system.
+characters.  Perl gives a socket one byte for each character up to code point
+255, so an accepted path is not cut short.  A path with a higher character in a
+character string cannot be used as a socket: connecting or binding dies with
+C<Wide character>.  Encode such a name to bytes first; each byte then counts
+towards the limit.
 
 =item Fingerprints: hexadecimal digits only.
 

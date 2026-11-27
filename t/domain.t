@@ -122,6 +122,8 @@ my %config = (
 $config{cwd}          = Cwd::getcwd();
 $config{env_dir}      = $ENV{CLASS_SHARED_DIR};
 $config{env_xdg}      = $ENV{XDG_RUNTIME_DIR};
+# The device and inode of STDOUT, which change if it is redirected.
+$config{stdout_id}    = join(':', (stat(STDOUT))[0, 1]);
 
 my $tmp = File::Temp->newdir('class-shared-domain-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 
@@ -340,7 +342,8 @@ subtest 'normalise_fingerprint: length boundaries' => sub {
 	dies_with(sub { Class::Shared::normalise_fingerprint(substr($colon64, 0, $colon_length - 1)) },
 		sprintf($err->{bad_fingerprint}, substr($colon64, 0, $colon_length - 1)),
 		'maximum - 1 character (94) is outside the domain');
-	is(length($colon64), $colon_length, 'maximum (95) is inside the domain');
+	is(Class::Shared::normalise_fingerprint($colon64), $normalised,
+		'maximum (95) is inside the domain');
 
 	dies_with(sub { Class::Shared::normalise_fingerprint($colon64 . '0') },
 		sprintf($err->{bad_fingerprint}, $colon64 . '0'),
@@ -1045,7 +1048,8 @@ subtest 'documented limits and process state' => sub {
 	is($ENV{XDG_RUNTIME_DIR}, $config{env_xdg}, 'XDG_RUNTIME_DIR is restored');
 
 	ok(-d "$tmp", 'no failure removed the temporary directory');
-	cmp_ok(fileno(STDOUT), '>=', 0, 'STDOUT still belongs to the test process: only the children detached theirs');
+	is(join(':', (stat(STDOUT))[0, 1]), $config{stdout_id},
+		'STDOUT still belongs to the test process: only the children detached theirs');
 };
 
 done_testing();
